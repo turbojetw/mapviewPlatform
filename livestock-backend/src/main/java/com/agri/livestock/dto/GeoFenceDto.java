@@ -7,6 +7,8 @@ public record GeoFenceDto(
         @NotBlank String name,
         @NotBlank String coordinatesJson,
         String color,
+        Double fillOpacity,
+        Double strokeWidth,
         boolean alertOnExit,
         boolean active
 ) {}

@@ -32,6 +32,8 @@ export interface GeoFence {
   name: string
   coordinatesJson: string
   color: string
+  fillOpacity: number
+  strokeWidth: number
   alertOnExit: boolean
   active: boolean
 }

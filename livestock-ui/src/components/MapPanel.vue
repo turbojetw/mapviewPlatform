@@ -318,6 +318,8 @@ function updateGeofences() {
           properties: {
             name: fence.name,
             color: fence.color,
+            fillOpacity: fence.fillOpacity ?? 0.15,
+            strokeWidth: fence.strokeWidth ?? 2.0,
             id: fence.id,
             selected: fence.id === props.selectedFenceId,
           },
@@ -336,14 +338,22 @@ function updateGeofences() {
     map.addLayer({ id: 'geofences-fill', type: 'fill', source: 'geofences',
       paint: {
         'fill-color': ['get', 'color'],
-        'fill-opacity': ['case', ['get', 'selected'], 0.28, 0.10],
+        'fill-opacity': ['case',
+          ['get', 'selected'],
+          ['min', ['*', ['coalesce', ['get', 'fillOpacity'], 0.15], 2.0], 0.55],
+          ['coalesce', ['get', 'fillOpacity'], 0.15],
+        ],
       }
     })
     map.addLayer({ id: 'geofences-line', type: 'line', source: 'geofences',
       paint: {
         'line-color': ['get', 'color'],
-        'line-width': ['case', ['get', 'selected'], 3, 1.5],
-        'line-opacity': ['case', ['get', 'selected'], 1.0, 0.65],
+        'line-width': ['case',
+          ['get', 'selected'],
+          ['+', ['coalesce', ['get', 'strokeWidth'], 2.0], 1.5],
+          ['coalesce', ['get', 'strokeWidth'], 2.0],
+        ],
+        'line-opacity': ['case', ['get', 'selected'], 1.0, 0.75],
       }
     })
   }

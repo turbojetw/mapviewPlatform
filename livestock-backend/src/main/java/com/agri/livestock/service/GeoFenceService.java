@@ -38,6 +38,8 @@ public class GeoFenceService {
         fence.setName(dto.name());
         fence.setCoordinatesJson(dto.coordinatesJson());
         fence.setColor(dto.color() != null ? dto.color() : "#FF6B6B");
+        fence.setFillOpacity(dto.fillOpacity() != null ? dto.fillOpacity() : 0.15);
+        fence.setStrokeWidth(dto.strokeWidth() != null ? dto.strokeWidth() : 2.0);
         fence.setAlertOnExit(dto.alertOnExit());
         fence.setActive(true);
         return geoFenceRepository.save(fence);
@@ -49,6 +51,8 @@ public class GeoFenceService {
         fence.setName(dto.name());
         fence.setCoordinatesJson(dto.coordinatesJson());
         fence.setColor(dto.color() != null ? dto.color() : fence.getColor());
+        if (dto.fillOpacity() != null) fence.setFillOpacity(dto.fillOpacity());
+        if (dto.strokeWidth() != null) fence.setStrokeWidth(dto.strokeWidth());
         fence.setAlertOnExit(dto.alertOnExit());
         fence.setActive(dto.active());
         return geoFenceRepository.save(fence);

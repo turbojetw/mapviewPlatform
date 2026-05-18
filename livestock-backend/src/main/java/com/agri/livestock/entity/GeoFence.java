@@ -23,6 +23,12 @@ public class GeoFence {
 
     private String color = "#FF6B6B";
 
+    @Column(name = "fill_opacity")
+    private double fillOpacity = 0.15;
+
+    @Column(name = "stroke_width")
+    private double strokeWidth = 2.0;
+
     @Column(name = "alert_on_exit")
     private boolean alertOnExit = true;
 

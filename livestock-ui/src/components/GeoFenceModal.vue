@@ -27,6 +27,39 @@ const emit = defineEmits<{
 type View = 'list' | 'create' | 'edit'
 const view = ref<View>('list')
 
+// ── Inline style editor ──────────────────────────────────────────────────────
+const styleOpenId = ref<number | null>(null)
+const styleForm = ref({ color: '#FF6B6B', fillOpacityPct: 15, strokeWidth: 2 })
+const styleLoading = ref(false)
+
+function openStyleEditor(fence: GeoFence) {
+  styleOpenId.value = fence.id
+  styleForm.value = {
+    color: fence.color,
+    fillOpacityPct: Math.round((fence.fillOpacity ?? 0.15) * 100),
+    strokeWidth: fence.strokeWidth ?? 2,
+  }
+}
+
+async function applyStyle(fence: GeoFence) {
+  styleLoading.value = true
+  try {
+    await updateGeoFence(fence.id, {
+      name: fence.name,
+      coordinatesJson: fence.coordinatesJson,
+      color: styleForm.value.color,
+      fillOpacity: styleForm.value.fillOpacityPct / 100,
+      strokeWidth: styleForm.value.strokeWidth,
+      alertOnExit: fence.alertOnExit,
+      active: fence.active,
+    })
+    styleOpenId.value = null
+    emit('updated')
+  } finally {
+    styleLoading.value = false
+  }
+}
+
 // ── Create form ─────────────────────────────────────────────────────────────
 const createForm = ref({ name: '', coordinatesJson: '', color: '#FF6B6B', alertOnExit: true })
 const createError = ref('')
@@ -69,6 +102,8 @@ async function submitCreate() {
 const editingFence = ref<GeoFence | null>(null)
 const editName = ref('')
 const editColor = ref('#FF6B6B')
+const editFillOpacityPct = ref(15)
+const editStrokeWidth = ref(2)
 const editAlertOnExit = ref(true)
 // Local coordinate rows — [lng, lat] pairs (open ring, last !== first)
 const editRows = ref<[number, number][]>([])
@@ -103,6 +138,8 @@ function openFenceForEdit(fence: GeoFence) {
   editingFence.value = fence
   editName.value = fence.name
   editColor.value = fence.color
+  editFillOpacityPct.value = Math.round((fence.fillOpacity ?? 0.15) * 100)
+  editStrokeWidth.value = fence.strokeWidth ?? 2
   editAlertOnExit.value = fence.alertOnExit
   editError.value = ''
   try {
@@ -158,6 +195,8 @@ async function saveEdit() {
       name: editName.value,
       coordinatesJson: JSON.stringify(closed),
       color: editColor.value,
+      fillOpacity: editFillOpacityPct.value / 100,
+      strokeWidth: editStrokeWidth.value,
       alertOnExit: editAlertOnExit.value,
       active: true,
     })
@@ -237,6 +276,13 @@ const SAMPLE = '[[105.496,28.196],[105.504,28.196],[105.504,28.204],[105.496,28.
             @click.stop="toggleActive(fence)"
           >{{ fence.active ? 'On' : 'Off' }}</button>
           <button
+            class="icon-btn style-btn"
+            :class="{ active: styleOpenId === fence.id }"
+            title="Edit appearance"
+            :disabled="!fence.active"
+            @click.stop="styleOpenId === fence.id ? styleOpenId = null : openStyleEditor(fence)"
+          >🎨</button>
+          <button
             class="icon-btn eye-btn"
             :class="{ hidden: hiddenFenceIds.includes(fence.id) }"
             :title="hiddenFenceIds.includes(fence.id) ? 'Show on map' : 'Hide from map'"
@@ -246,6 +292,33 @@ const SAMPLE = '[[105.496,28.196],[105.504,28.196],[105.504,28.204],[105.496,28.
           <button class="icon-btn edit-btn" title="Edit" :disabled="!fence.active" @click.stop="openFenceForEdit(fence)">✏️</button>
           <button class="icon-btn del-btn" title="Delete" @click.stop="removeFence(fence.id)">✕</button>
         </div>
+
+        <!-- Inline style editor -->
+        <div v-if="styleOpenId === fence.id" class="style-panel">
+          <div class="style-row">
+            <span class="style-label">Color</span>
+            <input type="color" v-model="styleForm.color" class="style-color-input" />
+            <span class="style-preview" :style="{ background: styleForm.color }" />
+            <span class="style-hex">{{ styleForm.color }}</span>
+          </div>
+          <div class="style-row">
+            <span class="style-label">Fill</span>
+            <input type="range" min="0" max="60" step="1" v-model.number="styleForm.fillOpacityPct" class="style-slider" />
+            <span class="style-val">{{ styleForm.fillOpacityPct }}%</span>
+          </div>
+          <div class="style-row">
+            <span class="style-label">Border</span>
+            <input type="range" min="1" max="8" step="0.5" v-model.number="styleForm.strokeWidth" class="style-slider" />
+            <span class="style-val">{{ styleForm.strokeWidth }}px</span>
+          </div>
+          <div class="style-actions">
+            <button class="btn-style-cancel" @click="styleOpenId = null">Cancel</button>
+            <button class="btn-style-apply" :disabled="styleLoading" @click="applyStyle(fence)">
+              {{ styleLoading ? 'Saving…' : 'Apply' }}
+            </button>
+          </div>
+        </div>
+
         <div class="create-row">
           <button class="btn-create" @click="view = 'create'">+ Coordinates</button>
           <button class="btn-draw" @click="$emit('start-draw')">🖊️ Draw on Map</button>
@@ -297,6 +370,23 @@ const SAMPLE = '[[105.496,28.196],[105.504,28.196],[105.504,28.204],[105.496,28.
             Color
             <div class="color-row">
               <input v-model="editColor" type="color" class="color-input" />
+            </div>
+          </label>
+        </div>
+
+        <div class="field-row">
+          <label style="flex:1">
+            Fill opacity
+            <div class="slider-label-row">
+              <input type="range" min="0" max="60" step="1" v-model.number="editFillOpacityPct" class="style-slider" />
+              <span class="style-val">{{ editFillOpacityPct }}%</span>
+            </div>
+          </label>
+          <label style="flex:1">
+            Border width
+            <div class="slider-label-row">
+              <input type="range" min="1" max="8" step="0.5" v-model.number="editStrokeWidth" class="style-slider" />
+              <span class="style-val">{{ editStrokeWidth }}px</span>
             </div>
           </label>
         </div>
@@ -429,9 +519,45 @@ const SAMPLE = '[[105.496,28.196],[105.504,28.196],[105.504,28.204],[105.496,28.
 .fence-name { flex: 1; font-size: 13px; }
 .fence-meta { font-size: 13px; }
 .icon-btn { background: none; border: none; cursor: pointer; padding: 2px 5px; font-size: 13px; border-radius: 3px; }
+.style-btn { color: var(--color-text-secondary); }
+.style-btn:hover { background: #ffffff11; }
+.style-btn.active { background: #FFA72622; color: var(--color-warning); }
 .eye-btn { color: var(--color-text-secondary); opacity: 0.9; }
 .eye-btn:hover { background: #ffffff11; }
 .eye-btn.hidden { opacity: 0.4; }
+
+/* ── Inline style editor ── */
+.style-panel {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 8px;
+  margin-top: -4px; margin-bottom: 2px;
+}
+.style-row {
+  display: flex; align-items: center; gap: 8px; font-size: 12px;
+}
+.style-label { color: var(--color-text-secondary); width: 44px; flex-shrink: 0; }
+.style-color-input { width: 32px; height: 26px; border: 1px solid var(--color-border); border-radius: 4px; padding: 1px; cursor: pointer; }
+.style-preview { width: 16px; height: 16px; border-radius: 3px; flex-shrink: 0; }
+.style-hex { font-family: monospace; font-size: 11px; color: var(--color-text-secondary); }
+.style-slider { flex: 1; accent-color: var(--color-accent); height: 4px; cursor: pointer; }
+.style-val { width: 36px; text-align: right; color: var(--color-text-primary); font-size: 11px; }
+.style-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 2px; }
+.btn-style-cancel {
+  padding: 4px 12px; background: transparent;
+  border: 1px solid var(--color-border); border-radius: 4px;
+  color: var(--color-text-secondary); font-size: 12px; cursor: pointer;
+}
+.btn-style-apply {
+  padding: 4px 12px; background: var(--color-accent);
+  border: none; border-radius: 4px;
+  color: #fff; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.btn-style-apply:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.slider-label-row { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
 .edit-btn { color: var(--color-info); }
 .edit-btn:hover { background: #42A5F522; }
 .del-btn { color: var(--color-danger); }

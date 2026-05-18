@@ -1,0 +1,526 @@
+<script setup lang="ts">
+import { ref, computed, watch } from 'vue'
+import type { GeoFence } from '../types'
+import { createGeoFence, updateGeoFence, deleteGeoFence } from '../api/livestock'
+import axios from 'axios'
+
+const props = defineProps<{
+  geofences: GeoFence[]
+  editingCoords: [number, number][] | null   // synced from map drag
+  prefilledCoords: [number, number][] | null // coords drawn on map → pre-fill create form
+  hiddenFenceIds: number[]
+  selectedFenceId: number | null
+}>()
+
+const emit = defineEmits<{
+  (e: 'close'): void
+  (e: 'updated'): void
+  (e: 'start-editing', fence: GeoFence): void
+  (e: 'stop-editing'): void
+  (e: 'editing-coords-changed', coords: [number, number][]): void
+  (e: 'save-editing', id: number, payload: Partial<GeoFence>): void
+  (e: 'start-draw'): void
+  (e: 'toggle-visibility', id: number): void
+  (e: 'select-fence', id: number): void
+}>()
+
+type View = 'list' | 'create' | 'edit'
+const view = ref<View>('list')
+
+// ── Create form ─────────────────────────────────────────────────────────────
+const createForm = ref({ name: '', coordinatesJson: '', color: '#FF6B6B', alertOnExit: true })
+const createError = ref('')
+const createLoading = ref(false)
+
+// Pre-fill create form when user draws a fence on the map.
+// immediate:true ensures this fires on mount when the modal is re-opened
+// with existing drawn coords (watcher alone won't fire for initial prop value).
+// createForm must be declared BEFORE this watch because immediate:true fires
+// the callback synchronously during setup — before any later declarations.
+watch(() => props.prefilledCoords, (coords) => {
+  if (!coords) return
+  createForm.value.coordinatesJson = JSON.stringify(coords)
+  view.value = 'create'
+}, { immediate: true })
+
+async function submitCreate() {
+  if (!createForm.value.name || !createForm.value.coordinatesJson) {
+    createError.value = 'Name and coordinates are required.'
+    return
+  }
+  try { JSON.parse(createForm.value.coordinatesJson) } catch {
+    createError.value = 'Invalid JSON coordinate format.'
+    return
+  }
+  createLoading.value = true
+  createError.value = ''
+  try {
+    const created = await createGeoFence(createForm.value)
+    createForm.value = { name: '', coordinatesJson: '', color: '#FF6B6B', alertOnExit: true }
+    view.value = 'list'
+    emit('updated')
+    emit('select-fence', created.id)
+  } catch (e: any) {
+    createError.value = e?.response?.data?.message ?? 'Failed to create.'
+  } finally { createLoading.value = false }
+}
+
+// ── Edit form ────────────────────────────────────────────────────────────────
+const editingFence = ref<GeoFence | null>(null)
+const editName = ref('')
+const editColor = ref('#FF6B6B')
+const editAlertOnExit = ref(true)
+// Local coordinate rows — [lng, lat] pairs (open ring, last !== first)
+const editRows = ref<[number, number][]>([])
+const editError = ref('')
+const editLoading = ref(false)
+
+// Sync editRows when map drag updates props.editingCoords
+watch(() => props.editingCoords, (coords) => {
+  if (!coords || view.value !== 'edit') return
+  // map sends full closed ring; strip duplicate last point for table display
+  const open = isClosedRing(coords) ? coords.slice(0, -1) : [...coords]
+  // Only update rows that actually changed (avoid wiping cursor position in inputs)
+  open.forEach((c, i) => {
+    if (!editRows.value[i] || editRows.value[i][0] !== c[0] || editRows.value[i][1] !== c[1]) {
+      if (editRows.value[i]) {
+        editRows.value[i] = [...c] as [number, number]
+      }
+    }
+  })
+  // Add/remove rows if vertex count changed
+  while (editRows.value.length < open.length) editRows.value.push([...open[editRows.value.length]] as [number, number])
+  while (editRows.value.length > open.length) editRows.value.pop()
+}, { deep: true })
+
+function isClosedRing(coords: [number, number][]): boolean {
+  if (coords.length < 2) return false
+  const first = coords[0], last = coords[coords.length - 1]
+  return first[0] === last[0] && first[1] === last[1]
+}
+
+function openFenceForEdit(fence: GeoFence) {
+  editingFence.value = fence
+  editName.value = fence.name
+  editColor.value = fence.color
+  editAlertOnExit.value = fence.alertOnExit
+  editError.value = ''
+  try {
+    let coords: [number, number][] = JSON.parse(fence.coordinatesJson)
+    if (isClosedRing(coords)) coords = coords.slice(0, -1)
+    editRows.value = coords.map(c => [...c] as [number, number])
+  } catch {
+    editRows.value = []
+  }
+  view.value = 'edit'
+  emit('start-editing', fence)
+}
+
+function onRowChange() {
+  // Emit the closed ring so the map can preview it
+  if (editRows.value.length >= 3) {
+    const closed: [number, number][] = [...editRows.value, [...editRows.value[0]] as [number, number]]
+    emit('editing-coords-changed', closed)
+  }
+}
+
+function addVertex() {
+  // Add midpoint between last two vertices, or just duplicate last
+  if (editRows.value.length >= 2) {
+    const a = editRows.value[editRows.value.length - 2]
+    const b = editRows.value[editRows.value.length - 1]
+    editRows.value.push([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2])
+  } else if (editRows.value.length === 1) {
+    const r = editRows.value[0]
+    editRows.value.push([r[0] + 0.005, r[1] + 0.005])
+  } else {
+    editRows.value.push([105.5, 28.2])
+  }
+  onRowChange()
+}
+
+function removeVertex(i: number) {
+  editRows.value.splice(i, 1)
+  onRowChange()
+}
+
+async function saveEdit() {
+  if (!editingFence.value) return
+  if (editRows.value.length < 3) {
+    editError.value = 'A fence needs at least 3 vertices.'
+    return
+  }
+  const closed: [number, number][] = [...editRows.value, [...editRows.value[0]] as [number, number]]
+  editLoading.value = true
+  editError.value = ''
+  try {
+    await axios.put(`/api/geofences/${editingFence.value.id}`, {
+      name: editName.value,
+      coordinatesJson: JSON.stringify(closed),
+      color: editColor.value,
+      alertOnExit: editAlertOnExit.value,
+      active: true,
+    })
+    cancelEdit()
+    emit('updated')
+  } catch (e: any) {
+    editError.value = e?.response?.data?.message ?? 'Failed to save.'
+  } finally { editLoading.value = false }
+}
+
+function cancelEdit() {
+  view.value = 'list'
+  editingFence.value = null
+  editRows.value = []
+  emit('stop-editing')
+}
+
+async function removeFence(id: number) {
+  if (!confirm('Delete this geofence?')) return
+  await deleteGeoFence(id)
+  emit('updated')
+}
+
+async function toggleActive(fence: GeoFence) {
+  await updateGeoFence(fence.id, {
+    name: fence.name,
+    coordinatesJson: fence.coordinatesJson,
+    color: fence.color,
+    alertOnExit: fence.alertOnExit,
+    active: !fence.active,
+  })
+  emit('updated')
+}
+
+function onBackdrop(e: MouseEvent) {
+  if ((e.target as HTMLElement).classList.contains('backdrop')) {
+    if (view.value === 'edit') cancelEdit()
+    emit('close')
+  }
+}
+
+const SAMPLE = '[[105.496,28.196],[105.504,28.196],[105.504,28.204],[105.496,28.204],[105.496,28.196]]'
+</script>
+
+<template>
+  <div class="backdrop" :class="{ 'edit-mode': view === 'edit' }" @click="onBackdrop">
+    <div class="modal" role="dialog">
+
+      <!-- ── Header ── -->
+      <div class="modal-header">
+        <div class="header-left">
+          <button v-if="view !== 'list'" class="back-btn" @click="view === 'edit' ? cancelEdit() : (view = 'list')">‹</button>
+          <h2>{{ view === 'list' ? 'Geofences' : view === 'create' ? 'New Fence' : 'Edit Fence' }}</h2>
+        </div>
+        <button class="close-btn" @click="view === 'edit' ? cancelEdit() : null; $emit('close')">✕</button>
+      </div>
+
+      <!-- ═══════════════ LIST VIEW ═══════════════ -->
+      <div v-if="view === 'list'" class="modal-body">
+        <div v-if="geofences.length === 0" class="empty">
+          No geofences yet. Click below to create one.
+        </div>
+        <div
+          v-for="fence in geofences" :key="fence.id"
+          class="fence-row"
+          :class="{ inactive: !fence.active, selected: fence.id === selectedFenceId }"
+          :title="fence.active ? 'Click to focus on map' : ''"
+          @click="fence.active && $emit('select-fence', fence.id)"
+        >
+          <span class="color-swatch" :style="{ background: fence.color }" />
+          <span class="fence-name">{{ fence.name }}</span>
+          <span class="fence-meta">{{ fence.alertOnExit ? '🔔' : '' }}</span>
+          <button
+            class="toggle-btn"
+            :class="fence.active ? 'toggle-on' : 'toggle-off'"
+            :title="fence.active ? 'Disable fence' : 'Enable fence'"
+            @click.stop="toggleActive(fence)"
+          >{{ fence.active ? 'On' : 'Off' }}</button>
+          <button
+            class="icon-btn eye-btn"
+            :class="{ hidden: hiddenFenceIds.includes(fence.id) }"
+            :title="hiddenFenceIds.includes(fence.id) ? 'Show on map' : 'Hide from map'"
+            :disabled="!fence.active"
+            @click.stop="$emit('toggle-visibility', fence.id)"
+          >{{ hiddenFenceIds.includes(fence.id) ? '🙈' : '👁' }}</button>
+          <button class="icon-btn edit-btn" title="Edit" :disabled="!fence.active" @click.stop="openFenceForEdit(fence)">✏️</button>
+          <button class="icon-btn del-btn" title="Delete" @click.stop="removeFence(fence.id)">✕</button>
+        </div>
+        <div class="create-row">
+          <button class="btn-create" @click="view = 'create'">+ Coordinates</button>
+          <button class="btn-draw" @click="$emit('start-draw')">🖊️ Draw on Map</button>
+        </div>
+      </div>
+
+      <!-- ═══════════════ CREATE VIEW ═══════════════ -->
+      <div v-else-if="view === 'create'" class="modal-body">
+        <form @submit.prevent="submitCreate">
+          <label>Name *<input v-model="createForm.name" type="text" placeholder="e.g. North Pasture" /></label>
+          <label>
+            Color
+            <div class="color-row">
+              <input v-model="createForm.color" type="color" class="color-input" />
+              <span class="color-hex">{{ createForm.color }}</span>
+            </div>
+          </label>
+          <label>
+            Coordinates * (JSON array of [lng, lat] pairs)
+            <textarea v-model="createForm.coordinatesJson" rows="4" :placeholder="SAMPLE" />
+            <span class="hint">First and last point must be identical to close the ring.</span>
+          </label>
+          <label class="checkbox-label">
+            <input v-model="createForm.alertOnExit" type="checkbox" />
+            Alert when animal exits this fence
+          </label>
+          <div v-if="createError" class="error-msg">{{ createError }}</div>
+          <div class="row-actions">
+            <button type="button" class="btn-cancel" @click="view = 'list'">Cancel</button>
+            <button type="submit" class="btn-submit" :disabled="createLoading">
+              {{ createLoading ? 'Saving…' : 'Create' }}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- ═══════════════ EDIT VIEW ═══════════════ -->
+      <div v-else-if="view === 'edit'" class="modal-body">
+        <div class="edit-hint">
+          Drag vertices directly on the map <strong>or</strong> type coordinates in the table — both sync in real time.
+        </div>
+
+        <div class="field-row">
+          <label style="flex:1">
+            Name
+            <input v-model="editName" type="text" />
+          </label>
+          <label>
+            Color
+            <div class="color-row">
+              <input v-model="editColor" type="color" class="color-input" />
+            </div>
+          </label>
+        </div>
+
+        <label class="checkbox-label">
+          <input v-model="editAlertOnExit" type="checkbox" />
+          Alert when animal exits
+        </label>
+
+        <!-- Coordinate table -->
+        <div class="coord-table-wrap">
+          <table class="coord-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Longitude</th>
+                <th>Latitude</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, i) in editRows" :key="i">
+                <td class="idx">{{ i + 1 }}</td>
+                <td>
+                  <input
+                    type="number"
+                    step="0.00001"
+                    :value="row[0]"
+                    @change="row[0] = parseFloat(($event.target as HTMLInputElement).value); onRowChange()"
+                  />
+                </td>
+                <td>
+                  <input
+                    type="number"
+                    step="0.00001"
+                    :value="row[1]"
+                    @change="row[1] = parseFloat(($event.target as HTMLInputElement).value); onRowChange()"
+                  />
+                </td>
+                <td>
+                  <button class="del-row-btn" :disabled="editRows.length <= 3" @click="removeVertex(i)">✕</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <button class="btn-add-vertex" @click="addVertex">+ Add Vertex</button>
+        </div>
+
+        <div v-if="editError" class="error-msg">{{ editError }}</div>
+
+        <div class="row-actions">
+          <button class="btn-cancel" @click="cancelEdit">Cancel</button>
+          <button class="btn-submit" :disabled="editLoading" @click="saveEdit">
+            {{ editLoading ? 'Saving…' : 'Save Fence' }}
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(3px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+}
+/* In edit mode: no overlay so the map is fully interactive */
+.backdrop.edit-mode {
+  background: transparent;
+  backdrop-filter: none;
+  pointer-events: none;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: calc(var(--header-height, 48px) + 8px) 12px 12px 0;
+}
+.backdrop.edit-mode .modal {
+  pointer-events: all;
+  max-height: calc(100vh - var(--header-height, 48px) - 24px);
+  box-shadow: 0 4px 32px rgba(0,0,0,0.7), 0 0 0 1px rgba(66,165,245,0.3);
+}
+.modal {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  width: 420px; max-width: 95vw;
+  max-height: 88vh; display: flex; flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+.modal-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+.header-left { display: flex; align-items: center; gap: 8px; }
+.back-btn { background: none; border: none; color: var(--color-text-secondary); font-size: 20px; cursor: pointer; padding: 0 4px; line-height: 1; }
+.back-btn:hover { color: var(--color-text-primary); }
+.modal-header h2 { font-size: 15px; font-weight: 600; }
+.close-btn { background: none; border: none; color: var(--color-text-secondary); font-size: 15px; cursor: pointer; padding: 2px 6px; }
+
+.modal-body {
+  padding: 14px 18px;
+  display: flex; flex-direction: column; gap: 10px;
+  overflow-y: auto; flex: 1;
+}
+.modal-body::-webkit-scrollbar { width: 4px; }
+.modal-body::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 2px; }
+
+.empty { font-size: 12px; color: var(--color-text-secondary); font-style: italic; text-align: center; padding: 12px 0; }
+
+/* ── Fence list rows ── */
+.fence-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px;
+  background: var(--color-bg-sidebar);
+  border-radius: 5px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.fence-row:not(.inactive):hover { background: var(--color-bg-card-hover); border-color: var(--color-border); }
+.fence-row.selected { border-color: var(--color-accent); background: #4CAF5010; }
+.fence-row.inactive { opacity: 0.45; cursor: default; }
+
+.color-swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+.fence-name { flex: 1; font-size: 13px; }
+.fence-meta { font-size: 13px; }
+.icon-btn { background: none; border: none; cursor: pointer; padding: 2px 5px; font-size: 13px; border-radius: 3px; }
+.eye-btn { color: var(--color-text-secondary); opacity: 0.9; }
+.eye-btn:hover { background: #ffffff11; }
+.eye-btn.hidden { opacity: 0.4; }
+.edit-btn { color: var(--color-info); }
+.edit-btn:hover { background: #42A5F522; }
+.del-btn { color: var(--color-danger); }
+.del-btn:hover { background: #ef535022; }
+.toggle-btn {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.03em;
+  padding: 2px 7px; border-radius: 10px; border: none; cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.toggle-on  { background: #4CAF5022; color: var(--color-accent); border: 1px solid #4CAF5055; }
+.toggle-on:hover  { background: #4CAF5044; }
+.toggle-off { background: #33384222; color: var(--color-text-secondary); border: 1px solid #ffffff22; }
+.toggle-off:hover { background: #33384244; }
+.create-row { display: flex; gap: 6px; margin-top: 4px; }
+.btn-create {
+  flex: 1; padding: 8px;
+  background: transparent; border: 1px dashed var(--color-border);
+  border-radius: 5px; color: var(--color-text-secondary);
+  font-size: 13px; cursor: pointer;
+}
+.btn-create:hover { border-color: var(--color-accent); color: var(--color-accent); }
+.btn-draw {
+  flex: 1; padding: 8px;
+  background: transparent; border: 1px dashed #FF6B6B88;
+  border-radius: 5px; color: #FF6B6B;
+  font-size: 13px; cursor: pointer;
+}
+.btn-draw:hover { background: #FF6B6B11; border-color: #FF6B6B; }
+
+/* ── Form fields ── */
+label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--color-text-secondary); }
+.checkbox-label { flex-direction: row; align-items: center; font-size: 13px; color: var(--color-text-primary); gap: 8px; }
+.field-row { display: flex; gap: 10px; align-items: flex-start; }
+input[type="text"], textarea {
+  background: var(--color-bg-sidebar); border: 1px solid var(--color-border);
+  border-radius: 5px; padding: 7px 10px; color: var(--color-text-primary);
+  font-size: 12px; outline: none;
+}
+input[type="text"]:focus, textarea:focus { border-color: var(--color-accent); }
+textarea { resize: vertical; font-family: monospace; }
+.color-row { display: flex; align-items: center; gap: 6px; }
+.color-input { width: 40px; height: 32px; border: 1px solid var(--color-border); border-radius: 5px; padding: 2px; cursor: pointer; }
+.color-hex { font-size: 11px; color: var(--color-text-secondary); font-family: monospace; }
+.hint { font-size: 10px; color: var(--color-text-secondary); }
+
+/* ── Edit hint banner ── */
+.edit-hint {
+  background: #42A5F511; border: 1px solid #42A5F533;
+  border-radius: 5px; padding: 8px 12px;
+  font-size: 12px; color: var(--color-info);
+}
+
+/* ── Coordinate table ── */
+.coord-table-wrap {
+  border: 1px solid var(--color-border); border-radius: 6px; overflow: hidden;
+}
+.coord-table {
+  width: 100%; border-collapse: collapse; font-size: 12px;
+}
+.coord-table th {
+  background: var(--color-bg-sidebar); padding: 6px 8px;
+  text-align: left; color: var(--color-text-secondary);
+  font-weight: 500; border-bottom: 1px solid var(--color-border);
+}
+.coord-table td { padding: 4px 6px; border-bottom: 1px solid var(--color-border); }
+.coord-table tr:last-child td { border-bottom: none; }
+.idx { color: var(--color-text-secondary); width: 24px; text-align: center; }
+.coord-table input[type="number"] {
+  width: 100%; background: transparent; border: 1px solid transparent;
+  border-radius: 3px; padding: 3px 6px; color: var(--color-text-primary);
+  font-size: 12px; font-family: monospace; outline: none;
+}
+.coord-table input[type="number"]:focus { border-color: var(--color-accent); background: var(--color-bg-sidebar); }
+.del-row-btn {
+  background: none; border: none; color: var(--color-danger);
+  cursor: pointer; font-size: 12px; padding: 2px 4px;
+}
+.del-row-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.btn-add-vertex {
+  width: 100%; padding: 6px; background: transparent;
+  border: none; border-top: 1px solid var(--color-border);
+  color: var(--color-accent); font-size: 12px; cursor: pointer;
+}
+.btn-add-vertex:hover { background: #4CAF5011; }
+
+/* ── Actions ── */
+.row-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.btn-cancel { padding: 8px 16px; background: transparent; border: 1px solid var(--color-border); border-radius: 5px; color: var(--color-text-secondary); font-size: 13px; cursor: pointer; }
+.btn-submit { padding: 8px 16px; background: var(--color-accent); border: none; border-radius: 5px; color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
+.btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+.error-msg { color: var(--color-danger); font-size: 12px; }
+</style>

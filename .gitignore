@@ -1,0 +1,26 @@
+# Maven
+livestock-backend/target/
+livestock-backend/.mvn/wrapper/maven-wrapper.jar
+
+# Node
+livestock-ui/node_modules/
+livestock-ui/dist/
+livestock-ui/.vite/
+
+# IDE / OS
+.DS_Store
+.idea/
+*.iml
+.vscode/
+*.swp
+
+# Logs
+*.log
+
+# H2 database files (if persisted)
+*.db
+*.mv.db
+*.trace.db
+
+# Claude local settings
+.claude/settings.local.json

@@ -1,0 +1,58 @@
+spring:
+  application:
+    name: livestock-tracker
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+
+  datasource:
+    url: jdbc:h2:mem:livestock;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+server:
+  port: 8081
+
+mqtt:
+  broker-url: tcp://localhost:1883
+  client-id: livestock-backend
+  topic-prefix: "livestock/fix/"
+  username: ""
+  password: ""
+  enabled: false
+
+logging:
+  level:
+    com.agri.livestock: INFO
+
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/livestock_platform}
+    username: ${DB_USER:livestock}
+    password: ${DB_PASS:livestock123}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  h2:
+    console:
+      enabled: false

@@ -12,6 +12,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'history-loaded', animalId: number, coords: [number, number][]): void
+  (e: 'edit'): void
+  (e: 'delete'): void
 }>()
 
 const STALE_MS = 60 * 60 * 1000
@@ -82,6 +84,11 @@ watch(historyRange, () => loadHistory())
         <div class="animal-species">{{ animal.species }}</div>
       </div>
       <button class="close-btn" title="Close" @click="$emit('close')">✕</button>
+    </div>
+
+    <div class="panel-actions">
+      <button class="action-btn edit-btn" @click="$emit('edit')">✏️ Edit</button>
+      <button class="action-btn delete-btn" @click="$emit('delete')">🗑 Delete</button>
     </div>
 
     <div class="panel-body">
@@ -208,6 +215,23 @@ watch(historyRange, () => loadHistory())
   transition: all 0.15s;
 }
 .close-btn:hover { background: #ef535022; color: var(--color-danger); }
+
+/* ── Action bar ── */
+.panel-actions {
+  display: flex; gap: 6px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+.action-btn {
+  flex: 1; padding: 6px 0;
+  border: none; border-radius: 5px;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: opacity 0.15s;
+}
+.action-btn:hover { opacity: 0.8; }
+.edit-btn { background: #42A5F522; color: var(--color-info); border: 1px solid #42A5F544; }
+.delete-btn { background: #ef535018; color: var(--color-danger); border: 1px solid #ef535044; }
 
 /* ── Body ── */
 .panel-body {

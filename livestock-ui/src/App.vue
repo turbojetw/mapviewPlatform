@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import type { Animal, AnimalStatus, GeoFence } from './types'
-import { fetchAnimals, fetchLatestStatuses, fetchGeoFences, simulatorPushRandomAll } from './api/livestock'
+import { fetchAnimals, fetchLatestStatuses, fetchGeoFences, simulatorPushRandomAll, deleteAnimal } from './api/livestock'
 import { useWebSocket } from './composables/useWebSocket'
 import MapPanel from './components/MapPanel.vue'
 import AnimalSidebar from './components/AnimalSidebar.vue'
@@ -15,6 +15,7 @@ const animalStatuses = reactive(new Map<number, AnimalStatus>())
 const geofences = ref<GeoFence[]>([])
 const selectedAnimalId = ref<number | null>(null)
 const showAddModal = ref(false)
+const animalToEdit = ref<Animal | null>(null)
 const showFenceModal = ref(false)
 const showAlertPanel = ref(false)
 const mapPanel = ref<InstanceType<typeof MapPanel>>()
@@ -134,6 +135,23 @@ function onHistoryLoaded(animalId: number, coords: [number, number][]) {
   mapPanel.value?.setHistoryTrail(animalId, coords)
 }
 
+function onEditAnimal() {
+  if (selectedAnimal.value) animalToEdit.value = selectedAnimal.value
+}
+
+async function onDeleteAnimal() {
+  if (!selectedAnimal.value) return
+  if (!confirm(`Delete ${selectedAnimal.value.name}? This cannot be undone.`)) return
+  try {
+    await deleteAnimal(selectedAnimal.value.id)
+    selectedAnimalId.value = null
+    await loadAll()
+    showToast(`${selectedAnimal.value?.name ?? 'Animal'} deleted.`)
+  } catch {
+    showToast('Failed to delete animal.')
+  }
+}
+
 function toggleFenceVisibility(id: number) {
   const idx = hiddenFenceIds.value.indexOf(id)
   if (idx === -1) hiddenFenceIds.value = [...hiddenFenceIds.value, id]
@@ -215,11 +233,18 @@ onMounted(async () => {
           :status="selectedStatus"
           @close="selectedAnimalId = null"
           @history-loaded="onHistoryLoaded"
+          @edit="onEditAnimal"
+          @delete="onDeleteAnimal"
         />
       </transition>
     </main>
 
-    <AddAnimalModal v-if="showAddModal" @close="showAddModal = false" @created="loadAll" />
+    <AddAnimalModal
+      v-if="showAddModal || animalToEdit"
+      :animal="animalToEdit ?? undefined"
+      @close="showAddModal = false; animalToEdit = null"
+      @saved="loadAll"
+    />
 
     <GeoFenceModal
       v-if="showFenceModal"

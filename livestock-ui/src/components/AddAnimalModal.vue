@@ -1,27 +1,32 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { createAnimal } from '../api/livestock'
+import type { Animal } from '../types'
+import { createAnimal, updateAnimal } from '../api/livestock'
+
+const props = defineProps<{ animal?: Animal }>()
 
 const emit = defineEmits<{
   (e: 'close'): void
-  (e: 'created'): void
+  (e: 'saved'): void
 }>()
 
+const isEdit = !!props.animal
+
 const form = ref({
-  name: '',
-  species: 'SHEEP' as string,
-  deviceEui: '',
-  collarColor: '#4CAF50',
-  notes: '',
+  name:        props.animal?.name        ?? '',
+  species:     props.animal?.species     ?? 'SHEEP' as string,
+  deviceEui:   props.animal?.deviceEui   ?? '',
+  collarColor: props.animal?.collarColor ?? '#4CAF50',
+  notes:       props.animal?.notes       ?? '',
 })
 const loading = ref(false)
 const error = ref('')
 
 const SPECIES_OPTIONS = [
-  { value: 'SHEEP', label: '🐑 Sheep' },
-  { value: 'GOOSE', label: '🦢 Goose' },
+  { value: 'SHEEP',   label: '🐑 Sheep'   },
+  { value: 'GOOSE',   label: '🦢 Goose'   },
   { value: 'CHICKEN', label: '🐔 Chicken' },
-  { value: 'PIG', label: '🐷 Pig' },
+  { value: 'PIG',     label: '🐷 Pig'     },
 ]
 
 async function submit() {
@@ -32,11 +37,15 @@ async function submit() {
   loading.value = true
   error.value = ''
   try {
-    await createAnimal(form.value)
-    emit('created')
+    if (isEdit && props.animal) {
+      await updateAnimal(props.animal.id, form.value)
+    } else {
+      await createAnimal(form.value)
+    }
+    emit('saved')
     emit('close')
   } catch (e: any) {
-    error.value = e?.response?.data?.message ?? 'Failed to create animal.'
+    error.value = e?.response?.data?.message ?? (isEdit ? 'Failed to save changes.' : 'Failed to create animal.')
   } finally {
     loading.value = false
   }
@@ -51,7 +60,7 @@ function onBackdrop(e: MouseEvent) {
   <div class="backdrop" @click="onBackdrop" @keydown.esc="$emit('close')">
     <div class="modal" role="dialog" aria-modal="true">
       <div class="modal-header">
-        <h2>Add Animal</h2>
+        <h2>{{ isEdit ? 'Edit Animal' : 'Add Animal' }}</h2>
         <button class="close-btn" @click="$emit('close')">✕</button>
       </div>
 
@@ -93,7 +102,7 @@ function onBackdrop(e: MouseEvent) {
         <div class="modal-actions">
           <button type="button" class="btn-cancel" @click="$emit('close')">Cancel</button>
           <button type="submit" class="btn-submit" :disabled="loading">
-            {{ loading ? 'Adding…' : 'Add Animal' }}
+            {{ loading ? 'Saving…' : (isEdit ? 'Save Changes' : 'Add Animal') }}
           </button>
         </div>
       </form>

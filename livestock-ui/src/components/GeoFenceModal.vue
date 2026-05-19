@@ -259,65 +259,66 @@ const SAMPLE = '[[105.496,28.196],[105.504,28.196],[105.504,28.204],[105.496,28.
         <div v-if="geofences.length === 0" class="empty">
           No geofences yet. Click below to create one.
         </div>
-        <div
-          v-for="fence in geofences" :key="fence.id"
-          class="fence-row"
-          :class="{ inactive: !fence.active, selected: fence.id === selectedFenceId }"
-          :title="fence.active ? 'Click to focus on map' : ''"
-          @click="fence.active && $emit('select-fence', fence.id)"
-        >
-          <span class="color-swatch" :style="{ background: fence.color }" />
-          <span class="fence-name">{{ fence.name }}</span>
-          <span class="fence-meta">{{ fence.alertOnExit ? '🔔' : '' }}</span>
-          <button
-            class="toggle-btn"
-            :class="fence.active ? 'toggle-on' : 'toggle-off'"
-            :title="fence.active ? 'Disable fence' : 'Enable fence'"
-            @click.stop="toggleActive(fence)"
-          >{{ fence.active ? 'On' : 'Off' }}</button>
-          <button
-            class="icon-btn style-btn"
-            :class="{ active: styleOpenId === fence.id }"
-            title="Edit appearance"
-            :disabled="!fence.active"
-            @click.stop="styleOpenId === fence.id ? styleOpenId = null : openStyleEditor(fence)"
-          >🎨</button>
-          <button
-            class="icon-btn eye-btn"
-            :class="{ hidden: hiddenFenceIds.includes(fence.id) }"
-            :title="hiddenFenceIds.includes(fence.id) ? 'Show on map' : 'Hide from map'"
-            :disabled="!fence.active"
-            @click.stop="$emit('toggle-visibility', fence.id)"
-          >{{ hiddenFenceIds.includes(fence.id) ? '🙈' : '👁' }}</button>
-          <button class="icon-btn edit-btn" title="Edit" :disabled="!fence.active" @click.stop="openFenceForEdit(fence)">✏️</button>
-          <button class="icon-btn del-btn" title="Delete" @click.stop="removeFence(fence.id)">✕</button>
-        </div>
+        <template v-for="fence in geofences" :key="fence.id">
+          <div
+            class="fence-row"
+            :class="{ inactive: !fence.active, selected: fence.id === selectedFenceId }"
+            :title="fence.active ? 'Click to focus on map' : ''"
+            @click="fence.active && $emit('select-fence', fence.id)"
+          >
+            <span class="color-swatch" :style="{ background: fence.color }" />
+            <span class="fence-name">{{ fence.name }}</span>
+            <span class="fence-meta">{{ fence.alertOnExit ? '🔔' : '' }}</span>
+            <button
+              class="toggle-btn"
+              :class="fence.active ? 'toggle-on' : 'toggle-off'"
+              :title="fence.active ? 'Disable fence' : 'Enable fence'"
+              @click.stop="toggleActive(fence)"
+            >{{ fence.active ? 'On' : 'Off' }}</button>
+            <button
+              class="icon-btn style-btn"
+              :class="{ active: styleOpenId === fence.id }"
+              title="Edit appearance"
+              :disabled="!fence.active"
+              @click.stop="styleOpenId === fence.id ? styleOpenId = null : openStyleEditor(fence)"
+            >🎨</button>
+            <button
+              class="icon-btn eye-btn"
+              :class="{ hidden: hiddenFenceIds.includes(fence.id) }"
+              :title="hiddenFenceIds.includes(fence.id) ? 'Show on map' : 'Hide from map'"
+              :disabled="!fence.active"
+              @click.stop="$emit('toggle-visibility', fence.id)"
+            >{{ hiddenFenceIds.includes(fence.id) ? '🙈' : '👁' }}</button>
+            <button class="icon-btn edit-btn" title="Edit" :disabled="!fence.active" @click.stop="openFenceForEdit(fence)">✏️</button>
+            <button class="icon-btn del-btn" title="Delete" @click.stop="removeFence(fence.id)">✕</button>
+          </div>
 
-        <!-- Inline style editor -->
-        <div v-if="styleOpenId === fence.id" class="style-panel">
-          <div class="style-row">
-            <span class="style-label">Color</span>
-            <input type="color" v-model="styleForm.color" class="style-color-input" />
-            <span class="style-preview" :style="{ background: styleForm.color }" />
-            <span class="style-hex">{{ styleForm.color }}</span>
+          <!-- Inline style editor — inside the template so 'fence' is in scope -->
+          <div v-if="styleOpenId === fence.id" class="style-panel">
+            <div class="style-row">
+              <span class="style-label">Color</span>
+              <input type="color" v-model="styleForm.color" class="style-color-input" />
+              <span class="style-preview" :style="{ background: styleForm.color }" />
+              <span class="style-hex">{{ styleForm.color }}</span>
+            </div>
+            <div class="style-row">
+              <span class="style-label">Fill</span>
+              <input type="range" min="0" max="60" step="1" v-model.number="styleForm.fillOpacityPct" class="style-slider" />
+              <span class="style-val">{{ styleForm.fillOpacityPct }}%</span>
+            </div>
+            <div class="style-row">
+              <span class="style-label">Border</span>
+              <input type="range" min="1" max="8" step="0.5" v-model.number="styleForm.strokeWidth" class="style-slider" />
+              <span class="style-val">{{ styleForm.strokeWidth }}px</span>
+            </div>
+            <div class="style-actions">
+              <button class="btn-style-cancel" @click="styleOpenId = null">Cancel</button>
+              <button class="btn-style-apply" :disabled="styleLoading" @click="applyStyle(fence)">
+                {{ styleLoading ? 'Saving…' : 'Apply' }}
+              </button>
+            </div>
           </div>
-          <div class="style-row">
-            <span class="style-label">Fill</span>
-            <input type="range" min="0" max="60" step="1" v-model.number="styleForm.fillOpacityPct" class="style-slider" />
-            <span class="style-val">{{ styleForm.fillOpacityPct }}%</span>
-          </div>
-          <div class="style-row">
-            <span class="style-label">Border</span>
-            <input type="range" min="1" max="8" step="0.5" v-model.number="styleForm.strokeWidth" class="style-slider" />
-            <span class="style-val">{{ styleForm.strokeWidth }}px</span>
-          </div>
-          <div class="style-actions">
-            <button class="btn-style-cancel" @click="styleOpenId = null">Cancel</button>
-            <button class="btn-style-apply" :disabled="styleLoading" @click="applyStyle(fence)">
-              {{ styleLoading ? 'Saving…' : 'Apply' }}
-            </button>
-          </div>
-        </div>
+        </template>
 
         <div class="create-row">
           <button class="btn-create" @click="view = 'create'">+ Coordinates</button>

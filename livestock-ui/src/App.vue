@@ -9,6 +9,8 @@ import AddAnimalModal from './components/AddAnimalModal.vue'
 import GeoFenceModal from './components/GeoFenceModal.vue'
 import AnimalDetailPanel from './components/AnimalDetailPanel.vue'
 import AlertHistoryPanel from './components/AlertHistoryPanel.vue'
+import AlertToastStack from './components/AlertToastStack.vue'
+import type { AlertToastItem } from './components/AlertToastStack.vue'
 
 const animals = ref<Animal[]>([])
 const animalStatuses = reactive(new Map<number, AnimalStatus>())
@@ -29,6 +31,20 @@ const selectedFenceId = ref<number | null>(null)
 
 // Session alert count — increments each time a geofence breach arrives via WS
 const sessionAlertCount = ref(0)
+
+// Stacking alert toast notifications
+const alertToasts = ref<AlertToastItem[]>([])
+let toastUidCounter = 0
+
+function addAlertToast(animalId: number, animalName: string, fenceName: string) {
+  const uid = ++toastUidCounter
+  alertToasts.value = [...alertToasts.value.slice(-4), { uid, animalId, animalName, fenceName }]
+  setTimeout(() => dismissToast(uid), 8000)
+}
+
+function dismissToast(uid: number) {
+  alertToasts.value = alertToasts.value.filter(t => t.uid !== uid)
+}
 
 // Derived: full Animal record for the selected animal
 const selectedAnimal = computed(() =>
@@ -105,14 +121,15 @@ function onFenceVertexInserted(afterIndex: number, coord: [number, number]) {
 }
 
 // ── WebSocket ──────────────────────────────────────────────────────────────
-const { connect, onAnimalUpdate, isConnected } = useWebSocket()
+const { connect, onAnimalUpdate, onAlert, isConnected } = useWebSocket()
 
 onAnimalUpdate((status) => {
   animalStatuses.set(status.animalId, status)
-  if (status.geofenceAlert) {
-    sessionAlertCount.value++
-    showToast(`⚠️ ${status.name} exited "${status.geofenceAlert}"`)
-  }
+})
+
+onAlert((n) => {
+  sessionAlertCount.value++
+  addAlertToast(n.animalId, n.animalName, n.fenceName)
 })
 
 async function loadAll() {
@@ -288,6 +305,12 @@ onMounted(async () => {
         </button>
       </div>
     </div>
+
+    <AlertToastStack
+      :items="alertToasts"
+      @dismiss="dismissToast"
+      @select-animal="selectAnimal"
+    />
 
     <transition name="toast">
       <div v-if="toast" class="toast">{{ toast }}</div>

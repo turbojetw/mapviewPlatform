@@ -1,11 +1,12 @@
 import { ref } from 'vue'
 import { Client } from '@stomp/stompjs'
 import SockJS from 'sockjs-client'
-import type { AnimalStatus } from '../types'
+import type { AnimalStatus, AlertNotification } from '../types'
 
 export function useWebSocket() {
   const isConnected = ref(false)
   let updateCallback: ((status: AnimalStatus) => void) | null = null
+  let alertCallback: ((n: AlertNotification) => void) | null = null
 
   const client = new Client({
     webSocketFactory: () => new SockJS('/ws'),
@@ -17,7 +18,15 @@ export function useWebSocket() {
           const status: AnimalStatus = JSON.parse(msg.body)
           updateCallback?.(status)
         } catch (e) {
-          console.error('Failed to parse WebSocket message', e)
+          console.error('Failed to parse location message', e)
+        }
+      })
+      client.subscribe('/topic/geofence/alert', (msg) => {
+        try {
+          const notification: AlertNotification = JSON.parse(msg.body)
+          alertCallback?.(notification)
+        } catch (e) {
+          console.error('Failed to parse alert message', e)
         }
       })
     },
@@ -41,5 +50,9 @@ export function useWebSocket() {
     updateCallback = cb
   }
 
-  return { connect, disconnect, onAnimalUpdate, isConnected }
+  function onAlert(cb: (n: AlertNotification) => void) {
+    alertCallback = cb
+  }
+
+  return { connect, disconnect, onAnimalUpdate, onAlert, isConnected }
 }

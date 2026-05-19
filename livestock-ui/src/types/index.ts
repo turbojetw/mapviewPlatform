@@ -54,6 +54,13 @@ export interface GeofenceAlertRecord {
   timestamp: string
 }
 
+export interface AlertNotification {
+  animalId: number
+  animalName: string
+  fenceName: string
+  timestamp: string
+}
+
 export interface DevicePayload {
   deviceEui: string
   ts?: number

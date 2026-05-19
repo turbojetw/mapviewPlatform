@@ -3,6 +3,7 @@ package com.agri.livestock.service;
 import com.agri.livestock.dto.DevicePayloadDto;
 import com.agri.livestock.dto.AnimalStatusDto;
 import com.agri.livestock.dto.LocationHistoryDto;
+import com.agri.livestock.dto.GeofenceAlertNotificationDto;
 import com.agri.livestock.entity.Animal;
 import com.agri.livestock.entity.LocationFix;
 import com.agri.livestock.repository.AnimalRepository;
@@ -53,6 +54,8 @@ public class LocationService {
             if (alert != null) {
                 log.info("Animal '{}' exited geofence '{}'", animal.getName(), alert);
                 alertService.save(animal.getId(), animal.getName(), alert);
+                messagingTemplate.convertAndSend("/topic/geofence/alert",
+                        new GeofenceAlertNotificationDto(animal.getId(), animal.getName(), alert, Instant.now()));
             }
         }
 

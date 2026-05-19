@@ -24,6 +24,7 @@ const emit = defineEmits<{
 
 const mapContainer = ref<HTMLDivElement>()
 let map: maplibregl.Map
+const mapReady = ref(false)
 
 // ─── Draw mode state ───────────────────────────────────────────────────────
 const drawActive = ref(false)
@@ -305,7 +306,7 @@ function updateFenceLabel() {
 }
 
 function updateGeofences() {
-  if (!map || !map.isStyleLoaded()) return
+  if (!map || !mapReady.value) return
   const editingId = props.editingFenceCoords ? getEditingFenceId() : null
 
   const features: GeoJSON.Feature[] = props.geofences
@@ -685,9 +686,15 @@ watch(() => props.selectedAnimalId, (newId, oldId) => {
   if (newId != null) drawTrail(newId)
 })
 
-watch(() => props.geofences, () => updateGeofences(), { deep: true })
-watch(() => props.hiddenFenceIds, () => updateGeofences(), { deep: true })
-watch(() => props.selectedFenceId, () => { updateGeofences() })
+// Single watcher covering all geofence-related state.
+// Including mapReady ensures that if geofence data arrives before the map's
+// load event (e.g. cached tiles on refresh), the render still fires once
+// the map is ready — and vice versa.
+watch(
+  [mapReady, () => props.geofences, () => props.hiddenFenceIds, () => props.selectedFenceId],
+  () => { if (mapReady.value) updateGeofences() },
+  { deep: true }
+)
 
 // Clear draw preview once the pending fence is saved or cancelled
 watch(() => props.pendingFenceCoords, (coords) => {
@@ -695,7 +702,7 @@ watch(() => props.pendingFenceCoords, (coords) => {
 })
 
 watch(() => props.editingFenceCoords, (coords) => {
-  if (!map || !map.isStyleLoaded()) return
+  if (!map || !mapReady.value) return
   if (!coords) {
     clearVertexMarkers()
     clearEditPreview()
@@ -788,8 +795,10 @@ onMounted(() => {
   map.on('load', () => {
     initDrawLayers()
     initEditPreviewLayer()
-    updateGeofences()
     props.animalStatuses.forEach(status => updateMarker(status))
+    // Setting mapReady triggers the combined watcher which calls updateGeofences().
+    // This ensures geofences render whether the API responded before or after map load.
+    mapReady.value = true
   })
 })
 

@@ -2,6 +2,7 @@ package com.agri.livestock.service;
 
 import com.agri.livestock.dto.DevicePayloadDto;
 import com.agri.livestock.dto.AnimalStatusDto;
+import com.agri.livestock.dto.FenceStatsDto;
 import com.agri.livestock.dto.LocationHistoryDto;
 import com.agri.livestock.dto.GeofenceAlertNotificationDto;
 import com.agri.livestock.entity.Animal;
@@ -61,6 +62,17 @@ public class LocationService {
 
         AnimalStatusDto status = animalService.toStatusDto(animal, fix, alert);
         messagingTemplate.convertAndSend("/topic/animal/location", status);
+
+        // Broadcast updated fence stats if this animal is assigned to a home fence
+        if (animal.getHomeGeofenceId() != null) {
+            try {
+                FenceStatsDto stats = geoFenceService.getFenceStats(animal.getHomeGeofenceId());
+                messagingTemplate.convertAndSend("/topic/fence/stats", stats);
+            } catch (Exception e) {
+                log.warn("Failed to broadcast fence stats for fence {}: {}", animal.getHomeGeofenceId(), e.getMessage());
+            }
+        }
+
         log.debug("Published location update for animal {} at {},{}", animal.getName(), payload.lat(), payload.lng());
     }
 

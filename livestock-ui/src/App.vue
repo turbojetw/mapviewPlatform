@@ -12,6 +12,7 @@ import AlertHistoryPanel from './components/AlertHistoryPanel.vue'
 import AlertToastStack from './components/AlertToastStack.vue'
 import type { AlertToastItem } from './components/AlertToastStack.vue'
 import DashboardPanel from './components/DashboardPanel.vue'
+import FenceAssignPanel from './components/FenceAssignPanel.vue'
 
 const animals = ref<Animal[]>([])
 const animalStatuses = reactive(new Map<number, AnimalStatus>())
@@ -22,6 +23,12 @@ const animalToEdit = ref<Animal | null>(null)
 const showFenceModal = ref(false)
 const showAlertPanel = ref(false)
 const showDashboard = ref(false)
+const assignFenceId = ref<number | null>(null)
+const assignFencePanel = ref<InstanceType<typeof FenceAssignPanel>>()
+
+const assignFence = computed(() =>
+  assignFenceId.value != null ? geofences.value.find(f => f.id === assignFenceId.value) ?? null : null
+)
 const mapPanel = ref<InstanceType<typeof MapPanel>>()
 const toast = ref<string | null>(null)
 
@@ -123,7 +130,7 @@ function onFenceVertexInserted(afterIndex: number, coord: [number, number]) {
 }
 
 // ── WebSocket ──────────────────────────────────────────────────────────────
-const { connect, onAnimalUpdate, onAlert, isConnected } = useWebSocket()
+const { connect, onAnimalUpdate, onAlert, onFenceStats, isConnected } = useWebSocket()
 
 onAnimalUpdate((status) => {
   animalStatuses.set(status.animalId, status)
@@ -132,6 +139,10 @@ onAnimalUpdate((status) => {
 onAlert((n) => {
   sessionAlertCount.value++
   addAlertToast(n.animalId, n.animalName, n.fenceName)
+})
+
+onFenceStats((s) => {
+  assignFencePanel.value?.applyStatsUpdate(s)
 })
 
 async function loadAll() {
@@ -281,6 +292,7 @@ onMounted(async () => {
       @start-draw="onStartDraw"
       @toggle-visibility="toggleFenceVisibility"
       @select-fence="onSelectFence"
+      @open-assign="assignFenceId = $event; showFenceModal = false"
     />
 
     <AlertHistoryPanel
@@ -296,6 +308,17 @@ onMounted(async () => {
       :session-alert-count="sessionAlertCount"
       @close="showDashboard = false"
       @select-animal="selectAnimal"
+    />
+
+    <FenceAssignPanel
+      v-if="assignFence"
+      ref="assignFencePanel"
+      :fence="assignFence"
+      :animals="animals"
+      :animal-statuses="animalStatuses"
+      :stats="null"
+      @close="assignFenceId = null"
+      @saved="loadAll"
     />
 
     <!-- Draw toolbar — lives in App.vue so MapLibre cannot intercept its clicks -->

@@ -37,4 +37,8 @@ public class Animal {
 
     @Column(name = "created_at", updatable = false)
     private Instant createdAt = Instant.now();
+
+    // Nullable: which geofence this animal is "assigned" to as its home area
+    @Column(name = "home_geofence_id")
+    private Long homeGeofenceId;
 }

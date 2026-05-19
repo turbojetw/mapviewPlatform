@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { Animal, AnimalStatus, GeoFence, LocationHistory, DevicePayload, GeofenceAlertRecord } from '../types'
+import type { Animal, AnimalStatus, GeoFence, LocationHistory, DevicePayload, GeofenceAlertRecord, FenceStats } from '../types'
 
 const api = axios.create({ baseURL: '/api' })
 
@@ -44,3 +44,12 @@ export const simulatorPushRandomAll = (): Promise<void> =>
 
 export const fetchAlerts = (limit = 50): Promise<GeofenceAlertRecord[]> =>
   api.get('/alerts', { params: { limit } }).then(r => r.data)
+
+export const fetchFenceStats = (fenceId: number): Promise<FenceStats> =>
+  api.get(`/geofences/${fenceId}/stats`).then(r => r.data)
+
+export const fetchFenceAnimals = (fenceId: number): Promise<Animal[]> =>
+  api.get(`/geofences/${fenceId}/animals`).then(r => r.data)
+
+export const assignAnimalsToFence = (fenceId: number, animalIds: number[]): Promise<void> =>
+  api.put(`/geofences/${fenceId}/animals`, animalIds).then(() => undefined)

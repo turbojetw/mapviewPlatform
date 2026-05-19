@@ -22,6 +22,7 @@ const emit = defineEmits<{
   (e: 'start-draw'): void
   (e: 'toggle-visibility', id: number): void
   (e: 'select-fence', id: number): void
+  (e: 'open-assign', id: number): void
 }>()
 
 type View = 'list' | 'create' | 'edit'
@@ -289,6 +290,7 @@ const SAMPLE = '[[105.496,28.196],[105.504,28.196],[105.504,28.204],[105.496,28.
               :disabled="!fence.active"
               @click.stop="$emit('toggle-visibility', fence.id)"
             >{{ hiddenFenceIds.includes(fence.id) ? '🙈' : '👁' }}</button>
+            <button class="icon-btn assign-btn" title="Assign animals" :disabled="!fence.active" @click.stop="$emit('open-assign', fence.id)">👥</button>
             <button class="icon-btn edit-btn" title="Edit" :disabled="!fence.active" @click.stop="openFenceForEdit(fence)">✏️</button>
             <button class="icon-btn del-btn" title="Delete" @click.stop="removeFence(fence.id)">✕</button>
           </div>
@@ -559,6 +561,8 @@ const SAMPLE = '[[105.496,28.196],[105.504,28.196],[105.504,28.204],[105.496,28.
 .btn-style-apply:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .slider-label-row { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.assign-btn { color: var(--color-text-secondary); }
+.assign-btn:hover { background: #ffffff11; }
 .edit-btn { color: var(--color-info); }
 .edit-btn:hover { background: #42A5F522; }
 .del-btn { color: var(--color-danger); }

@@ -1,12 +1,13 @@
 import { ref } from 'vue'
 import { Client } from '@stomp/stompjs'
 import SockJS from 'sockjs-client'
-import type { AnimalStatus, AlertNotification } from '../types'
+import type { AnimalStatus, AlertNotification, FenceStats } from '../types'
 
 export function useWebSocket() {
   const isConnected = ref(false)
   let updateCallback: ((status: AnimalStatus) => void) | null = null
   let alertCallback: ((n: AlertNotification) => void) | null = null
+  let fenceStatsCallback: ((s: FenceStats) => void) | null = null
 
   const client = new Client({
     webSocketFactory: () => new SockJS('/ws'),
@@ -27,6 +28,14 @@ export function useWebSocket() {
           alertCallback?.(notification)
         } catch (e) {
           console.error('Failed to parse alert message', e)
+        }
+      })
+      client.subscribe('/topic/fence/stats', (msg) => {
+        try {
+          const stats: FenceStats = JSON.parse(msg.body)
+          fenceStatsCallback?.(stats)
+        } catch (e) {
+          console.error('Failed to parse fence stats message', e)
         }
       })
     },
@@ -54,5 +63,9 @@ export function useWebSocket() {
     alertCallback = cb
   }
 
-  return { connect, disconnect, onAnimalUpdate, onAlert, isConnected }
+  function onFenceStats(cb: (s: FenceStats) => void) {
+    fenceStatsCallback = cb
+  }
+
+  return { connect, disconnect, onAnimalUpdate, onAlert, onFenceStats, isConnected }
 }

@@ -1,7 +1,10 @@
 package com.agri.livestock.service;
 
+import com.agri.livestock.dto.FenceStatsDto;
 import com.agri.livestock.dto.GeoFenceDto;
+import com.agri.livestock.entity.Animal;
 import com.agri.livestock.entity.GeoFence;
+import com.agri.livestock.repository.AnimalRepository;
 import com.agri.livestock.repository.GeoFenceRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,6 +22,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class GeoFenceService {
 
     private final GeoFenceRepository geoFenceRepository;
+    private final AnimalRepository animalRepository;
     private final ObjectMapper objectMapper;
     private final GeometryFactory geometryFactory = new GeometryFactory(new PrecisionModel(), 4326);
 
@@ -101,6 +105,37 @@ public class GeoFenceService {
             }
         }
         return Optional.empty();
+    }
+
+    // ── Animal assignment ─────────────────────────────────────────────────────
+
+    public List<Animal> getAssignedAnimals(Long fenceId) {
+        return animalRepository.findByHomeGeofenceIdAndActiveTrue(fenceId);
+    }
+
+    public void setAssignedAnimals(Long fenceId, List<Long> animalIds) {
+        // Clear existing assignments for this fence
+        animalRepository.findByHomeGeofenceIdAndActiveTrue(fenceId)
+                .forEach(a -> { a.setHomeGeofenceId(null); animalRepository.save(a); });
+        // Assign the new list (clears any previous home fence for those animals)
+        animalIds.forEach(id -> animalRepository.findById(id).ifPresent(a -> {
+            a.setHomeGeofenceId(fenceId);
+            animalRepository.save(a);
+        }));
+    }
+
+    public FenceStatsDto getFenceStats(Long fenceId) {
+        GeoFence fence = geoFenceRepository.findById(fenceId)
+                .orElseThrow(() -> new NoSuchElementException("GeoFence not found: " + fenceId));
+        List<Animal> assigned = animalRepository.findByHomeGeofenceIdAndActiveTrue(fenceId);
+        Set<Long> insideIds = new HashSet<>();
+        Set<Long> animalFences = null;
+        for (Animal a : assigned) {
+            animalFences = animalInsideFences.getOrDefault(a.getId(), Collections.emptySet());
+            if (animalFences.contains(fenceId)) insideIds.add(a.getId());
+        }
+        return new FenceStatsDto(fenceId, fence.getName(),
+                assigned.size(), insideIds.size(), assigned.size() - insideIds.size(), insideIds);
     }
 
     private Polygon parsePolygon(String coordinatesJson) throws Exception {

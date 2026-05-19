@@ -9,6 +9,16 @@ export interface Animal {
   notes?: string
   active: boolean
   createdAt: string
+  homeGeofenceId?: number | null
+}
+
+export interface FenceStats {
+  fenceId: number
+  fenceName: string
+  totalAssigned: number
+  currentlyInside: number
+  away: number
+  insideAnimalIds: number[]
 }
 
 export interface AnimalStatus {

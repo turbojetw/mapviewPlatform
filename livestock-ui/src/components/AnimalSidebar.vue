@@ -13,6 +13,7 @@ const emit = defineEmits<{
   (e: 'animal-selected', id: number): void
   (e: 'open-add-modal'): void
   (e: 'open-geofence-modal'): void
+  (e: 'open-dashboard'): void
   (e: 'simulate-all'): void
 }>()
 
@@ -46,6 +47,7 @@ function selectAnimal(id: number) {
     <div class="actions">
       <button class="btn-primary" @click="$emit('open-add-modal')">+ Animal</button>
       <button class="btn-secondary" @click="$emit('open-geofence-modal')">Fences</button>
+      <button class="btn-dashboard" @click="$emit('open-dashboard')" title="Open dashboard">📊</button>
       <button class="btn-simulate" @click="$emit('simulate-all')" title="Simulate random GPS fix for all animals">⚡ Sim</button>
     </div>
 
@@ -112,6 +114,17 @@ function selectAnimal(id: number) {
   transition: all 0.15s;
 }
 .btn-secondary:hover { border-color: var(--color-accent); color: var(--color-accent); }
+
+.btn-dashboard {
+  padding: 7px 10px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  font-size: 13px;
+  transition: all 0.15s;
+}
+.btn-dashboard:hover { border-color: var(--color-info); color: var(--color-info); }
 
 .btn-simulate {
   padding: 7px 10px;

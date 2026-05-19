@@ -11,6 +11,7 @@ import AnimalDetailPanel from './components/AnimalDetailPanel.vue'
 import AlertHistoryPanel from './components/AlertHistoryPanel.vue'
 import AlertToastStack from './components/AlertToastStack.vue'
 import type { AlertToastItem } from './components/AlertToastStack.vue'
+import DashboardPanel from './components/DashboardPanel.vue'
 
 const animals = ref<Animal[]>([])
 const animalStatuses = reactive(new Map<number, AnimalStatus>())
@@ -20,6 +21,7 @@ const showAddModal = ref(false)
 const animalToEdit = ref<Animal | null>(null)
 const showFenceModal = ref(false)
 const showAlertPanel = ref(false)
+const showDashboard = ref(false)
 const mapPanel = ref<InstanceType<typeof MapPanel>>()
 const toast = ref<string | null>(null)
 
@@ -225,6 +227,7 @@ onMounted(async () => {
         @animal-selected="selectAnimal"
         @open-add-modal="showAddModal = true"
         @open-geofence-modal="mapPanel?.cancelDraw(); showFenceModal = true"
+        @open-dashboard="showDashboard = true"
         @simulate-all="onSimulateAll"
       />
       <MapPanel
@@ -284,6 +287,15 @@ onMounted(async () => {
       v-if="showAlertPanel"
       :session-count="sessionAlertCount"
       @close="showAlertPanel = false"
+    />
+
+    <DashboardPanel
+      v-if="showDashboard"
+      :animals="animals"
+      :animal-statuses="animalStatuses"
+      :session-alert-count="sessionAlertCount"
+      @close="showDashboard = false"
+      @select-animal="selectAnimal"
     />
 
     <!-- Draw toolbar — lives in App.vue so MapLibre cannot intercept its clicks -->

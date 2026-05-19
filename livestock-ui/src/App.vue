@@ -275,6 +275,7 @@ onMounted(async () => {
     <AddAnimalModal
       v-if="showAddModal || animalToEdit"
       :animal="animalToEdit ?? undefined"
+      :geofences="geofences"
       @close="showAddModal = false; animalToEdit = null"
       @saved="loadAll"
     />

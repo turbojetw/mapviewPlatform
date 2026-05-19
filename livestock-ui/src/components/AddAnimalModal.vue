@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import type { Animal } from '../types'
-import { createAnimal, updateAnimal } from '../api/livestock'
+import type { Animal, GeoFence } from '../types'
+import { createAnimal, updateAnimal, setAnimalHomeFence } from '../api/livestock'
 
-const props = defineProps<{ animal?: Animal }>()
+const props = defineProps<{
+  animal?: Animal
+  geofences: GeoFence[]
+}>()
 
 const emit = defineEmits<{
   (e: 'close'): void
@@ -11,16 +14,20 @@ const emit = defineEmits<{
 }>()
 
 const isEdit = !!props.animal
+const originalHomeGeofenceId = props.animal?.homeGeofenceId ?? null
 
 const form = ref({
-  name:        props.animal?.name        ?? '',
-  species:     props.animal?.species     ?? 'SHEEP' as string,
-  deviceEui:   props.animal?.deviceEui   ?? '',
-  collarColor: props.animal?.collarColor ?? '#4CAF50',
-  notes:       props.animal?.notes       ?? '',
+  name:           props.animal?.name        ?? '',
+  species:        props.animal?.species     ?? 'SHEEP' as string,
+  deviceEui:      props.animal?.deviceEui   ?? '',
+  collarColor:    props.animal?.collarColor ?? '#4CAF50',
+  notes:          props.animal?.notes       ?? '',
+  homeGeofenceId: props.animal?.homeGeofenceId ?? null as number | null,
 })
 const loading = ref(false)
 const error = ref('')
+
+const activeFences = props.geofences.filter(f => f.active)
 
 const SPECIES_OPTIONS = [
   { value: 'SHEEP',   label: '🐑 Sheep'   },
@@ -37,10 +44,14 @@ async function submit() {
   loading.value = true
   error.value = ''
   try {
+    let saved: Animal
     if (isEdit && props.animal) {
-      await updateAnimal(props.animal.id, form.value)
+      saved = await updateAnimal(props.animal.id, form.value)
     } else {
-      await createAnimal(form.value)
+      saved = await createAnimal(form.value)
+    }
+    if (form.value.homeGeofenceId !== originalHomeGeofenceId) {
+      await setAnimalHomeFence(saved.id, form.value.homeGeofenceId)
     }
     emit('saved')
     emit('close')
@@ -97,6 +108,14 @@ function onBackdrop(e: MouseEvent) {
           <textarea v-model="form.notes" rows="2" placeholder="Optional notes" />
         </label>
 
+        <label>
+          Home Fence
+          <select v-model="form.homeGeofenceId">
+            <option :value="null">— No fence —</option>
+            <option v-for="f in activeFences" :key="f.id" :value="f.id">{{ f.name }}</option>
+          </select>
+        </label>
+
         <div v-if="error" class="error-msg">{{ error }}</div>
 
         <div class="modal-actions">
@@ -114,7 +133,6 @@ function onBackdrop(e: MouseEvent) {
 .backdrop {
   position: fixed; inset: 0;
   background: rgba(0,0,0,0.6);
-  backdrop-filter: blur(3px);
   display: flex; align-items: center; justify-content: center;
   z-index: 1000;
 }

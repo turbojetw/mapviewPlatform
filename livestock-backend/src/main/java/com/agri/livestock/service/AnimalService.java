@@ -58,6 +58,12 @@ public class AnimalService {
         animalRepository.save(animal);
     }
 
+    public Animal setHomeFence(Long animalId, Long fenceId) {
+        Animal animal = getById(animalId);
+        animal.setHomeGeofenceId(fenceId);   // null = unassign
+        return animalRepository.save(animal);
+    }
+
     public Optional<AnimalStatusDto> getLatestStatus(Animal animal) {
         List<LocationFix> fixes = locationFixRepository.findTop1ByAnimalOrderByTimestampDesc(animal);
         if (fixes.isEmpty()) return Optional.empty();

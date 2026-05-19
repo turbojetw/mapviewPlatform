@@ -45,6 +45,11 @@ export const simulatorPushRandomAll = (): Promise<void> =>
 export const fetchAlerts = (limit = 50): Promise<GeofenceAlertRecord[]> =>
   api.get('/alerts', { params: { limit } }).then(r => r.data)
 
+export const setAnimalHomeFence = (animalId: number, fenceId: number | null): Promise<Animal> =>
+  api.patch(`/animals/${animalId}/home-fence`, fenceId, {
+    headers: { 'Content-Type': 'application/json' },
+  }).then(r => r.data)
+
 export const fetchFenceStats = (fenceId: number): Promise<FenceStats> =>
   api.get(`/geofences/${fenceId}/stats`).then(r => r.data)
 

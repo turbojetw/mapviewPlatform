@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import type { Animal, AnimalStatus, LocationHistory } from '../types'
-import { fetchHistory, simulatorPushRandom } from '../api/livestock'
+import type { Animal, AnimalStatus, GeoFence, LocationHistory } from '../types'
+import { fetchHistory, simulatorPushRandom, setAnimalHomeFence } from '../api/livestock'
 import { timeAgo } from '../utils/time'
 
 const props = defineProps<{
   animal: Animal
   status: AnimalStatus | undefined
+  geofences: GeoFence[]
 }>()
 
 const emit = defineEmits<{
@@ -14,6 +15,7 @@ const emit = defineEmits<{
   (e: 'history-loaded', animalId: number, coords: [number, number][]): void
   (e: 'edit'): void
   (e: 'delete'): void
+  (e: 'home-fence-changed'): void
 }>()
 
 const STALE_MS = 60 * 60 * 1000
@@ -70,6 +72,40 @@ async function simulate() {
 
 const recentFixes = computed(() => [...history.value].reverse().slice(0, 30))
 
+// ── Home fence ───────────────────────────────────────────────────────────────
+const activeFences = computed(() => props.geofences.filter(f => f.active))
+const homeFence = computed(() =>
+  props.animal.homeGeofenceId != null
+    ? activeFences.value.find(f => f.id === props.animal.homeGeofenceId) ?? null
+    : null
+)
+const editingFence = ref(false)
+const selectedFenceId = ref<number | null>(props.animal.homeGeofenceId ?? null)
+const fenceSaving = ref(false)
+const fenceError = ref('')
+
+watch(() => props.animal.homeGeofenceId, (v) => { selectedFenceId.value = v ?? null })
+
+async function saveHomeFence() {
+  fenceSaving.value = true
+  fenceError.value = ''
+  try {
+    await setAnimalHomeFence(props.animal.id, selectedFenceId.value)
+    editingFence.value = false
+    emit('home-fence-changed')
+  } catch {
+    fenceError.value = 'Failed to save.'
+  } finally {
+    fenceSaving.value = false
+  }
+}
+
+function cancelFenceEdit() {
+  selectedFenceId.value = props.animal.homeGeofenceId ?? null
+  editingFence.value = false
+  fenceError.value = ''
+}
+
 watch(() => props.animal.id, () => loadHistory(), { immediate: true })
 watch(historyRange, () => loadHistory())
 </script>
@@ -109,6 +145,42 @@ watch(historyRange, () => loadHistory())
           <span class="label">Notes</span>
           <span class="notes-text">{{ animal.notes }}</span>
         </div>
+      </section>
+
+      <!-- Home fence -->
+      <section class="section">
+        <div class="fence-header">
+          <div class="section-title">Home Fence</div>
+          <button v-if="!editingFence" class="fence-edit-btn" @click="editingFence = true" title="Change home fence">✏️</button>
+        </div>
+
+        <!-- View mode -->
+        <template v-if="!editingFence">
+          <div v-if="homeFence" class="fence-chip">
+            <span class="fence-dot" :style="{ background: homeFence.color }" />
+            <span class="fence-chip-name">{{ homeFence.name }}</span>
+            <button class="fence-unassign-btn" title="Remove assignment" @click="editingFence = true">✕</button>
+          </div>
+          <div v-else class="fence-none">
+            Not assigned —
+            <button class="fence-assign-link" @click="editingFence = true">Assign fence</button>
+          </div>
+        </template>
+
+        <!-- Edit mode -->
+        <template v-else>
+          <select v-model="selectedFenceId" class="fence-select">
+            <option :value="null">— No fence —</option>
+            <option v-for="f in activeFences" :key="f.id" :value="f.id">{{ f.name }}</option>
+          </select>
+          <div v-if="fenceError" class="fence-err">{{ fenceError }}</div>
+          <div class="fence-edit-actions">
+            <button class="fence-btn-cancel" @click="cancelFenceEdit">Cancel</button>
+            <button class="fence-btn-save" :disabled="fenceSaving" @click="saveHomeFence">
+              {{ fenceSaving ? 'Saving…' : 'Save' }}
+            </button>
+          </div>
+        </template>
       </section>
 
       <!-- Current status -->
@@ -254,6 +326,39 @@ watch(historyRange, () => loadHistory())
   text-transform: uppercase; letter-spacing: 0.06em;
   margin-bottom: 8px;
 }
+
+/* ── Home fence ── */
+.fence-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.fence-header .section-title { margin-bottom: 0; }
+.fence-edit-btn { background: none; border: none; font-size: 12px; cursor: pointer; color: var(--color-text-secondary); padding: 1px 4px; border-radius: 3px; }
+.fence-edit-btn:hover { color: var(--color-info); background: #42A5F511; }
+
+.fence-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 8px 5px 10px;
+  background: var(--color-bg-card); border: 1px solid var(--color-border);
+  border-radius: 20px; max-width: 100%;
+}
+.fence-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.fence-chip-name { font-size: 12px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fence-unassign-btn { background: none; border: none; color: var(--color-text-secondary); font-size: 11px; cursor: pointer; padding: 0 2px; line-height: 1; }
+.fence-unassign-btn:hover { color: var(--color-danger); }
+
+.fence-none { font-size: 12px; color: var(--color-text-secondary); font-style: italic; }
+.fence-assign-link { background: none; border: none; color: var(--color-accent); font-size: 12px; cursor: pointer; text-decoration: underline; padding: 0; }
+
+.fence-select {
+  width: 100%; background: var(--color-bg-sidebar);
+  border: 1px solid var(--color-border); border-radius: 5px;
+  padding: 6px 8px; color: var(--color-text-primary);
+  font-size: 12px; outline: none; margin-bottom: 6px;
+}
+.fence-select:focus { border-color: var(--color-accent); }
+.fence-err { font-size: 11px; color: var(--color-danger); margin-bottom: 4px; }
+.fence-edit-actions { display: flex; gap: 6px; }
+.fence-btn-cancel { flex: 1; padding: 5px; background: transparent; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text-secondary); font-size: 11px; cursor: pointer; }
+.fence-btn-save { flex: 1; padding: 5px; background: var(--color-accent); border: none; border-radius: 4px; color: #fff; font-size: 11px; font-weight: 600; cursor: pointer; }
+.fence-btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ── Device info ── */
 .info-row {

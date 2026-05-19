@@ -262,10 +262,12 @@ onMounted(async () => {
           v-if="selectedAnimal"
           :animal="selectedAnimal"
           :status="selectedStatus"
+          :geofences="geofences"
           @close="selectedAnimalId = null"
           @history-loaded="onHistoryLoaded"
           @edit="onEditAnimal"
           @delete="onDeleteAnimal"
+          @home-fence-changed="loadAll"
         />
       </transition>
     </main>

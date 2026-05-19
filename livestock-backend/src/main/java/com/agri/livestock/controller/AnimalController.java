@@ -43,4 +43,9 @@ public class AnimalController {
         animalService.softDelete(id);
         return ResponseEntity.noContent().build();
     }
+
+    @PatchMapping("/{id}/home-fence")
+    public Animal setHomeFence(@PathVariable Long id, @RequestBody(required = false) Long fenceId) {
+        return animalService.setHomeFence(id, fenceId);
+    }
 }

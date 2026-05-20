@@ -456,14 +456,12 @@ const SAMPLE = '[[105.496,28.196],[105.504,28.196],[105.504,28.204],[105.496,28.
 .backdrop {
   position: fixed; inset: 0;
   background: rgba(0,0,0,0.6);
-  backdrop-filter: blur(3px);
   display: flex; align-items: center; justify-content: center;
   z-index: 1000;
 }
 /* In edit mode: no overlay so the map is fully interactive */
 .backdrop.edit-mode {
   background: transparent;
-  backdrop-filter: none;
   pointer-events: none;
   align-items: flex-start;
   justify-content: flex-end;

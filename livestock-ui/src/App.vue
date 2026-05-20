@@ -69,11 +69,6 @@ const selectedStatus = computed(() =>
 const isDrawing = computed(() => mapPanel.value?.drawActive.value ?? false)
 const drawCount = computed(() => mapPanel.value?.drawVertexCount.value ?? 0)
 
-// ── Fence editing state ────────────────────────────────────────────────────
-const editingFenceCoords = ref<[number, number][] | null>(null)
-const editingFenceColor = ref('#FF6B6B')
-const editUndoStack = ref<[number, number][][]>([])
-
 // ── Fence drawing state ────────────────────────────────────────────────────
 const drawnFenceCoords = ref<[number, number][] | null>(null)
 
@@ -91,62 +86,6 @@ function onDrawComplete(coords: [number, number][]) {
 function onDrawCancelled() {
   drawnFenceCoords.value = null   // clears the preview via watcher
   showFenceModal.value = true
-}
-
-function onStartEditing(fence: GeoFence) {
-  editUndoStack.value = []
-  editingFenceColor.value = fence.color
-  try {
-    const coords: [number, number][] = JSON.parse(fence.coordinatesJson)
-    editingFenceCoords.value = coords
-    mapPanel.value?.startFenceEdit({ id: fence.id, coords, color: fence.color })
-  } catch {
-    showToast('Failed to parse fence coordinates.')
-  }
-}
-
-function onStopEditing() {
-  editingFenceCoords.value = null
-}
-
-function onEditingCoordsChanged(coords: [number, number][]) {
-  editingFenceCoords.value = coords
-}
-
-function pushEditUndo() {
-  if (editingFenceCoords.value)
-    editUndoStack.value.push(editingFenceCoords.value.map(c => [...c] as [number, number]))
-}
-
-function onFenceVertexMoved(index: number, coord: [number, number]) {
-  if (!editingFenceCoords.value) return
-  pushEditUndo()
-  const coords = [...editingFenceCoords.value]
-  coords[index] = coord
-  if (index === 0 && coords.length > 1) coords[coords.length - 1] = [...coord]
-  editingFenceCoords.value = coords
-}
-
-function onFenceVertexInserted(afterIndex: number, coord: [number, number]) {
-  if (!editingFenceCoords.value) return
-  pushEditUndo()
-  const open = editingFenceCoords.value.slice(0, -1)
-  open.splice(afterIndex + 1, 0, coord)
-  editingFenceCoords.value = [...open, [...open[0]] as [number, number]]
-}
-
-function onFenceVertexDeleted(index: number) {
-  if (!editingFenceCoords.value) return
-  const open = editingFenceCoords.value.slice(0, -1)
-  if (open.length <= 3) return
-  pushEditUndo()
-  open.splice(index, 1)
-  editingFenceCoords.value = [...open, [...open[0]] as [number, number]]
-}
-
-function onEditUndo() {
-  const prev = editUndoStack.value.pop()
-  if (prev) editingFenceCoords.value = prev
 }
 
 // ── WebSocket ──────────────────────────────────────────────────────────────
@@ -267,15 +206,9 @@ onMounted(async () => {
         :geofences="geofences"
         :selected-animal-id="selectedAnimalId"
         :selected-fence-id="selectedFenceId"
-        :editing-fence-coords="editingFenceCoords"
-        :editing-fence-color="editingFenceColor"
         :pending-fence-coords="drawnFenceCoords"
         :hidden-fence-ids="hiddenFenceIds"
         @animal-selected="selectAnimal"
-        @fence-vertex-moved="onFenceVertexMoved"
-        @fence-vertex-inserted="onFenceVertexInserted"
-        @fence-vertex-deleted="onFenceVertexDeleted"
-        @edit-undo="onEditUndo"
         @draw-complete="onDrawComplete"
         @draw-cancelled="onDrawCancelled"
       />
@@ -305,15 +238,11 @@ onMounted(async () => {
     <GeoFenceModal
       v-if="showFenceModal"
       :geofences="geofences"
-      :editing-coords="editingFenceCoords"
       :prefilled-coords="drawnFenceCoords"
       :hidden-fence-ids="hiddenFenceIds"
       :selected-fence-id="selectedFenceId"
-      @close="showFenceModal = false; onStopEditing(); drawnFenceCoords = null"
+      @close="showFenceModal = false; drawnFenceCoords = null"
       @updated="loadAll(); drawnFenceCoords = null"
-      @start-editing="onStartEditing"
-      @stop-editing="onStopEditing"
-      @editing-coords-changed="onEditingCoordsChanged"
       @start-draw="onStartDraw"
       @toggle-visibility="toggleFenceVisibility"
       @select-fence="onSelectFence"

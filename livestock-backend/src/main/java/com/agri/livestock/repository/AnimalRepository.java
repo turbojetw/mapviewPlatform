@@ -10,4 +10,5 @@ public interface AnimalRepository extends JpaRepository<Animal, Long> {
     Optional<Animal> findByDeviceEui(String deviceEui);
     List<Animal> findByActiveTrue();
     List<Animal> findByHomeGeofenceIdAndActiveTrue(Long homeGeofenceId);
+    List<Animal> findByHomeGeofenceId(Long homeGeofenceId);
 }

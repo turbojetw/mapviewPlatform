@@ -8,18 +8,12 @@ const props = defineProps<{
   geofences: GeoFence[]
   selectedAnimalId: number | null
   selectedFenceId: number | null
-  editingFenceCoords: [number, number][] | null
-  editingFenceColor: string
   pendingFenceCoords: [number, number][] | null  // drawn but not yet saved
   hiddenFenceIds: number[]
 }>()
 
 const emit = defineEmits<{
   (e: 'animal-selected', id: number): void
-  (e: 'fence-vertex-moved', index: number, coord: [number, number]): void
-  (e: 'fence-vertex-inserted', afterIndex: number, coord: [number, number]): void
-  (e: 'fence-vertex-deleted', index: number): void
-  (e: 'edit-undo'): void
   (e: 'draw-complete', coords: [number, number][]): void
   (e: 'draw-cancelled'): void
 }>()
@@ -171,19 +165,6 @@ const markers = new Map<number, maplibregl.Marker>()
 const positionHistory = new Map<number, [number, number][]>()
 const MAX_TRAIL = 50
 
-// Vertex handles for fence editing
-const vertexMarkers: maplibregl.Marker[] = []
-let draggingIndex: number | null = null
-
-// Midpoint handles for edge insertion
-const midpointMarkers: maplibregl.Marker[] = []
-let draggingMidpointEdge: number | null = null
-
-// Line drag state (drag anywhere on the polygon edge to insert + move a vertex)
-let lineDragEdge: number | null = null
-let lineDragLastPos: [number, number] | null = null
-let lineDragHasMoved = false
-
 // ─── Animal markers ────────────────────────────────────────────────────────
 
 function makeMarkerEl(status: AnimalStatus): HTMLElement {
@@ -309,10 +290,9 @@ function updateFenceLabel() {
 
 function updateGeofences() {
   if (!map || !mapReady.value) return
-  const editingId = props.editingFenceCoords ? _editingFenceId : null
 
   const features: GeoJSON.Feature[] = props.geofences
-    .filter(f => f.active && f.id !== editingId && !props.hiddenFenceIds.includes(f.id))
+    .filter(f => f.active && !props.hiddenFenceIds.includes(f.id))
     .map(fence => {
       try {
         const coords: [number, number][] = JSON.parse(fence.coordinatesJson)
@@ -364,364 +344,6 @@ function updateGeofences() {
   updateFenceLabel()
 }
 
-// Track which fence is being edited (we need the id to exclude from normal layer)
-let _editingFenceId: number | null = null
-
-// ─── Edit preview layer ────────────────────────────────────────────────────
-
-function initEditPreviewLayer() {
-  if (map.getSource('fence-edit-preview')) return
-  map.addSource('fence-edit-preview', {
-    type: 'geojson',
-    data: { type: 'FeatureCollection', features: [] }
-  })
-  map.addLayer({ id: 'fence-edit-fill', type: 'fill', source: 'fence-edit-preview',
-    paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.15 } })
-  map.addLayer({ id: 'fence-edit-line', type: 'line', source: 'fence-edit-preview',
-    paint: { 'line-color': ['get', 'color'], 'line-width': 3, 'line-opacity': 1 } })
-  // Transparent wider hit area so line drag works away from vertex/midpoint markers
-  map.addLayer({ id: 'fence-edit-hit', type: 'line', source: 'fence-edit-preview',
-    paint: { 'line-width': 20, 'line-opacity': 0 } })
-  setupLineDrag()
-}
-
-function updateEditPreview(coords: [number, number][], color: string) {
-  if (!map || !map.isStyleLoaded()) return
-  initEditPreviewLayer()
-
-  if (coords.length < 3) {
-    const empty: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] }
-    ;(map.getSource('fence-edit-preview') as maplibregl.GeoJSONSource).setData(empty)
-    return
-  }
-
-  // Ensure closed ring
-  const ring = isClosedRing(coords) ? coords : [...coords, coords[0]]
-  const geojson: GeoJSON.FeatureCollection = {
-    type: 'FeatureCollection',
-    features: [{
-      type: 'Feature',
-      properties: { color },
-      geometry: { type: 'Polygon', coordinates: [ring] }
-    }]
-  }
-  ;(map.getSource('fence-edit-preview') as maplibregl.GeoJSONSource).setData(geojson)
-}
-
-function clearEditPreview() {
-  if (!map || !map.isStyleLoaded() || !map.getSource('fence-edit-preview')) return
-  const empty: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] }
-  ;(map.getSource('fence-edit-preview') as maplibregl.GeoJSONSource).setData(empty)
-}
-
-
-function isClosedRing(coords: [number, number][]): boolean {
-  if (coords.length < 2) return false
-  return coords[0][0] === coords[coords.length - 1][0] &&
-         coords[0][1] === coords[coords.length - 1][1]
-}
-
-// ─── Vertex drag handles ───────────────────────────────────────────────────
-
-function makeVertexEl(index: number): HTMLElement {
-  const el = document.createElement('div')
-  const color = props.editingFenceColor || '#FF6B6B'
-  el.style.cssText = `
-    width:18px;height:18px;border-radius:50%;box-sizing:border-box;
-    background:#fff;border:3px solid ${color};
-    cursor:grab;box-shadow:0 2px 6px rgba(0,0,0,0.55);
-    z-index:10;transition:border-color 0.12s,transform 0.12s;
-  `
-  el.title = `Vertex ${index + 1} — drag to move · right-click to delete`
-
-  el.addEventListener('mouseenter', () => {
-    el.style.borderColor = '#ef5350'
-    el.style.transform = 'scale(1.2)'
-  })
-  el.addEventListener('mouseleave', () => {
-    el.style.borderColor = props.editingFenceColor || '#FF6B6B'
-    el.style.transform = ''
-  })
-  el.addEventListener('contextmenu', (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (props.editingFenceCoords && props.editingFenceCoords.length > 4) {
-      emit('fence-vertex-deleted', index)
-    }
-  })
-  return el
-}
-
-function handleEditKey(e: KeyboardEvent) {
-  if (drawActive.value) return
-  if (!props.editingFenceCoords) return
-  if ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey)) {
-    e.preventDefault()
-    emit('edit-undo')
-  }
-}
-
-function setupVertexMarkers(coords: [number, number][]) {
-  clearVertexMarkers()
-  // Don't show the closing duplicate point
-  const points = isClosedRing(coords) ? coords.slice(0, -1) : coords
-
-  points.forEach((coord, i) => {
-    const el = makeVertexEl(i)
-    const marker = new maplibregl.Marker({ element: el, draggable: true, anchor: 'center' })
-      .setLngLat(coord)
-      .addTo(map)
-
-    marker.on('dragstart', () => {
-      draggingIndex = i
-      el.style.cursor = 'grabbing'
-    })
-
-    marker.on('drag', () => {
-      // Live-update only the preview polygon during drag
-      if (props.editingFenceCoords) {
-        const pos = marker.getLngLat()
-        const updated = props.editingFenceCoords.map((c, idx) => {
-          if (idx === i) return [pos.lng, pos.lat] as [number, number]
-          // Also update closing point if dragging first vertex
-          if (i === 0 && idx === props.editingFenceCoords!.length - 1) return [pos.lng, pos.lat] as [number, number]
-          return c
-        })
-        updateEditPreview(updated, props.editingFenceColor)
-        // Live-reposition the two adjacent midpoint markers
-        const open = isClosedRing(updated) ? updated.slice(0, -1) : updated
-        const n = open.length
-        const prevEdge = (i - 1 + n) % n
-        if (midpointMarkers[prevEdge] != null && prevEdge !== draggingMidpointEdge)
-          midpointMarkers[prevEdge].setLngLat(midpoint(open[(i - 1 + n) % n], open[i]))
-        if (midpointMarkers[i] != null && i !== draggingMidpointEdge)
-          midpointMarkers[i].setLngLat(midpoint(open[i], open[(i + 1) % n]))
-      }
-    })
-
-    marker.on('dragend', () => {
-      draggingIndex = null
-      el.style.cursor = 'grab'
-      const pos = marker.getLngLat()
-      emit('fence-vertex-moved', i, [pos.lng, pos.lat])
-    })
-
-    vertexMarkers.push(marker)
-  })
-  setupMidpointMarkers(coords)
-}
-
-function clearVertexMarkers() {
-  clearMidpointMarkers()
-  vertexMarkers.forEach(m => m.remove())
-  vertexMarkers.length = 0
-  draggingIndex = null
-}
-
-// Reposition vertex markers when coords change from table edits
-function repositionVertexMarkers(coords: [number, number][]) {
-  const points = isClosedRing(coords) ? coords.slice(0, -1) : coords
-  if (points.length !== vertexMarkers.length) {
-    // Vertex count changed — rebuild all
-    setupVertexMarkers(coords)
-    return
-  }
-  points.forEach((coord, i) => {
-    if (i !== draggingIndex) {
-      vertexMarkers[i]?.setLngLat(coord)
-    }
-  })
-  repositionMidpointMarkers(coords)
-}
-
-// ─── Midpoint drag handles ─────────────────────────────────────────────────
-
-function midpoint(a: [number, number], b: [number, number]): [number, number] {
-  return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
-}
-
-function makeMidpointEl(): HTMLElement {
-  const el = document.createElement('div')
-  el.style.cssText = `
-    width:12px;height:12px;border-radius:50%;box-sizing:border-box;
-    background:rgba(255,255,255,0.85);border:2px solid ${props.editingFenceColor || '#FF6B6B'};
-    cursor:grab;box-shadow:0 1px 4px rgba(0,0,0,0.45);
-    z-index:9;opacity:0.75;
-  `
-  el.title = 'Drag to insert vertex on this edge'
-  return el
-}
-
-function setupMidpointMarkers(coords: [number, number][]) {
-  clearMidpointMarkers()
-  const open = isClosedRing(coords) ? coords.slice(0, -1) : coords
-  const n = open.length
-  if (n < 2) return
-
-  open.forEach((coord, i) => {
-    const next = open[(i + 1) % n]
-    const el = makeMidpointEl()
-
-    const marker = new maplibregl.Marker({ element: el, draggable: true, anchor: 'center' })
-      .setLngLat(midpoint(coord, next))
-      .addTo(map)
-
-    marker.on('dragstart', () => {
-      draggingMidpointEdge = i
-      // Upgrade visually to a vertex handle so it's clear a new vertex is forming
-      el.style.width = '18px'
-      el.style.height = '18px'
-      el.style.opacity = '1'
-      el.style.background = '#fff'
-      el.style.cursor = 'grabbing'
-      el.style.zIndex = '10'
-      el.style.boxShadow = '0 2px 6px rgba(0,0,0,0.55)'
-    })
-
-    marker.on('drag', () => {
-      if (props.editingFenceCoords) {
-        const currentOpen = isClosedRing(props.editingFenceCoords)
-          ? props.editingFenceCoords.slice(0, -1)
-          : props.editingFenceCoords
-        const pos = marker.getLngLat()
-        const newOpen = [...currentOpen]
-        newOpen.splice(i + 1, 0, [pos.lng, pos.lat] as [number, number])
-        updateEditPreview([...newOpen, [...newOpen[0]] as [number, number]], props.editingFenceColor)
-      }
-    })
-
-    marker.on('dragend', () => {
-      draggingMidpointEdge = null
-      const pos = marker.getLngLat()
-      emit('fence-vertex-inserted', i, [pos.lng, pos.lat])
-    })
-
-    midpointMarkers.push(marker)
-  })
-}
-
-function clearMidpointMarkers() {
-  midpointMarkers.forEach(m => m.remove())
-  midpointMarkers.length = 0
-  draggingMidpointEdge = null
-}
-
-function repositionMidpointMarkers(coords: [number, number][]) {
-  const open = isClosedRing(coords) ? coords.slice(0, -1) : coords
-  const n = open.length
-  if (n !== midpointMarkers.length) {
-    setupMidpointMarkers(coords)
-    return
-  }
-  open.forEach((coord, i) => {
-    if (i !== draggingMidpointEdge)
-      midpointMarkers[i]?.setLngLat(midpoint(coord, open[(i + 1) % n]))
-  })
-}
-
-// ─── Line drag (click anywhere on edge to insert + drag vertex) ────────────
-
-function distPtToSeg(p: [number, number], a: [number, number], b: [number, number]): number {
-  const dx = b[0] - a[0], dy = b[1] - a[1]
-  if (dx === 0 && dy === 0) return Math.hypot(p[0] - a[0], p[1] - a[1])
-  const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy)))
-  return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy))
-}
-
-function findClosestEdgeIndex(open: [number, number][], pt: [number, number]): number {
-  let bestIdx = 0, bestDist = Infinity
-  for (let i = 0; i < open.length; i++) {
-    const d = distPtToSeg(pt, open[i], open[(i + 1) % open.length])
-    if (d < bestDist) { bestDist = d; bestIdx = i }
-  }
-  return bestIdx
-}
-
-function setupLineDrag() {
-  map.on('mouseenter', 'fence-edit-hit', () => {
-    if (!props.editingFenceCoords || drawActive.value) return
-    map.getCanvas().style.cursor = 'crosshair'
-  })
-  map.on('mouseleave', 'fence-edit-hit', () => {
-    if (!drawActive.value && lineDragEdge === null) map.getCanvas().style.cursor = ''
-  })
-
-  map.on('mousedown', 'fence-edit-hit', (e) => {
-    if (!props.editingFenceCoords || drawActive.value) return
-    e.preventDefault()
-
-    const open = isClosedRing(props.editingFenceCoords)
-      ? props.editingFenceCoords.slice(0, -1)
-      : props.editingFenceCoords
-    const clickPt: [number, number] = [e.lngLat.lng, e.lngLat.lat]
-    lineDragEdge = findClosestEdgeIndex(open, clickPt)
-    lineDragLastPos = clickPt
-    lineDragHasMoved = false
-    map.getCanvas().style.cursor = 'grabbing'
-    map.dragPan.disable()
-
-    // Live cursor vertex marker — appears as soon as the user moves (shows where new vertex will land)
-    let cursorMarker: maplibregl.Marker | null = null
-
-    function onMove(me: maplibregl.MapMouseEvent) {
-      if (lineDragEdge === null || !props.editingFenceCoords) return
-      lineDragHasMoved = true
-      const pos: [number, number] = [me.lngLat.lng, me.lngLat.lat]
-      lineDragLastPos = pos
-      const co = isClosedRing(props.editingFenceCoords)
-        ? props.editingFenceCoords.slice(0, -1)
-        : props.editingFenceCoords
-      const newOpen = [...co]
-      newOpen.splice(lineDragEdge + 1, 0, pos)
-      updateEditPreview([...newOpen, [...newOpen[0]] as [number, number]], props.editingFenceColor)
-      // Show / move live cursor vertex marker
-      if (!cursorMarker) {
-        const el = makeVertexEl(-1)
-        el.style.borderColor = '#FFA726' // orange = "new vertex"
-        el.style.pointerEvents = 'none'
-        cursorMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
-          .setLngLat(pos).addTo(map)
-      } else {
-        cursorMarker.setLngLat(pos)
-      }
-    }
-
-    function finishLineDrag(finalPos: [number, number] | null) {
-      map.off('mousemove', onMove)
-      map.off('mouseup', onUp)
-      window.removeEventListener('mouseup', onWindowUp)
-      cursorMarker?.remove()
-      cursorMarker = null
-      map.getCanvas().style.cursor = ''
-      map.dragPan.enable()
-      if (lineDragEdge !== null) {
-        const pos = finalPos ?? lineDragLastPos
-        if (pos && lineDragHasMoved) {
-          emit('fence-vertex-inserted', lineDragEdge, pos)
-        } else if (props.editingFenceCoords) {
-          // Plain click with no drag — restore preview without inserting
-          updateEditPreview(props.editingFenceCoords, props.editingFenceColor)
-        }
-      }
-      lineDragEdge = null
-      lineDragLastPos = null
-      lineDragHasMoved = false
-    }
-
-    function onUp(me: maplibregl.MapMouseEvent) {
-      finishLineDrag([me.lngLat.lng, me.lngLat.lat])
-    }
-
-    function onWindowUp() {
-      finishLineDrag(lineDragLastPos)
-    }
-
-    map.on('mousemove', onMove)
-    map.on('mouseup', onUp)
-    window.addEventListener('mouseup', onWindowUp, { once: true })
-  })
-}
-
 // ─── Watchers ─────────────────────────────────────────────────────────────
 
 watch(() => props.animalStatuses, (statuses) => {
@@ -748,51 +370,11 @@ watch(() => props.pendingFenceCoords, (coords) => {
   if (!coords) clearDrawPreview()
 })
 
-watch(() => props.editingFenceCoords, (coords) => {
-  if (!map || !mapReady.value) return
-  if (!coords) {
-    clearVertexMarkers()
-    clearEditPreview()
-    _editingFenceId = null
-    updateGeofences()
-    window.removeEventListener('keydown', handleEditKey)
-    return
-  }
-  updateEditPreview(coords, props.editingFenceColor)
-  repositionVertexMarkers(coords)
-  updateGeofences() // re-render normal layer excluding the editing fence
-}, { deep: true })
-
-watch(() => props.editingFenceColor, (color) => {
-  if (props.editingFenceCoords) {
-    updateEditPreview(props.editingFenceCoords, color)
-    vertexMarkers.forEach(m => { m.getElement().style.borderColor = color })
-    midpointMarkers.forEach(m => { m.getElement().style.borderColor = color })
-  }
-})
-
 // ─── Public API ────────────────────────────────────────────────────────────
 
 function flyToAnimal(animalId: number) {
   const status = props.animalStatuses.get(animalId)
   if (status && map) map.flyTo({ center: [status.lng, status.lat], zoom: 15, duration: 800 })
-}
-
-function startFenceEdit(fence: { id: number; coords: [number, number][]; color: string }) {
-  _editingFenceId = fence.id
-  updateGeofences()
-  setupVertexMarkers(fence.coords)
-  updateEditPreview(fence.coords, fence.color)
-  window.addEventListener('keydown', handleEditKey)
-  // Fly to fence — right padding accounts for the 420px edit panel
-  if (fence.coords.length > 0 && map) {
-    const lngs = fence.coords.map(c => c[0])
-    const lats = fence.coords.map(c => c[1])
-    map.fitBounds([
-      [Math.min(...lngs), Math.min(...lats)],
-      [Math.max(...lngs), Math.max(...lats)]
-    ], { padding: { top: 80, bottom: 60, left: 60, right: 460 }, duration: 600 })
-  }
 }
 
 function setHistoryTrail(animalId: number, coords: [number, number][]) {
@@ -814,7 +396,7 @@ function flyToFence(fenceId: number) {
   } catch {}
 }
 
-defineExpose({ flyToAnimal, startFenceEdit, startDraw, cancelDraw, finishDraw, undoVertex, drawActive, drawVertexCount, setHistoryTrail, flyToFence })
+defineExpose({ flyToAnimal, startDraw, cancelDraw, finishDraw, undoVertex, drawActive, drawVertexCount, setHistoryTrail, flyToFence })
 
 // ─── Mount ─────────────────────────────────────────────────────────────────
 
@@ -843,7 +425,6 @@ onMounted(() => {
 
   map.on('load', () => {
     initDrawLayers()
-    initEditPreviewLayer()
     props.animalStatuses.forEach(status => updateMarker(status))
     // Setting mapReady triggers the combined watcher which calls updateGeofences().
     // This ensures geofences render whether the API responded before or after map load.
@@ -852,7 +433,6 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  clearVertexMarkers()
   fenceLabelMarker?.remove()
   map?.remove()
 })
@@ -861,24 +441,10 @@ onUnmounted(() => {
 <template>
   <div class="map-wrapper">
     <div ref="mapContainer" class="map-container" />
-
-    <!-- Fence edit banner -->
-    <div v-if="editingFenceCoords && !drawActive" class="edit-mode-banner">
-      ✏️ Editing fence — drag vertices or update coordinates in the panel
-    </div>
   </div>
 </template>
 
 <style scoped>
 .map-wrapper { flex: 1; position: relative; overflow: hidden; }
 .map-container { width: 100%; height: 100%; }
-
-
-.edit-mode-banner {
-  position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
-  background: #1a1d23ee; border: 1px solid #42A5F5aa;
-  color: var(--color-info); font-size: 12px; padding: 6px 14px;
-  border-radius: 20px; pointer-events: none;
-  white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-}
 </style>

@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, watch } from 'vue'
 import type { GeoFence } from '../types'
 import { createGeoFence, updateGeoFence, deleteGeoFence } from '../api/livestock'
 import axios from 'axios'
 
 const props = defineProps<{
   geofences: GeoFence[]
-  editingCoords: [number, number][] | null   // synced from map drag
   prefilledCoords: [number, number][] | null // coords drawn on map → pre-fill create form
   hiddenFenceIds: number[]
   selectedFenceId: number | null
@@ -15,10 +14,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'updated'): void
-  (e: 'start-editing', fence: GeoFence): void
-  (e: 'stop-editing'): void
-  (e: 'editing-coords-changed', coords: [number, number][]): void
-  (e: 'save-editing', id: number, payload: Partial<GeoFence>): void
   (e: 'start-draw'): void
   (e: 'toggle-visibility', id: number): void
   (e: 'select-fence', id: number): void
@@ -106,34 +101,8 @@ const editColor = ref('#FF6B6B')
 const editFillOpacityPct = ref(15)
 const editStrokeWidth = ref(2)
 const editAlertOnExit = ref(true)
-// Local coordinate rows — [lng, lat] pairs (open ring, last !== first)
-const editRows = ref<[number, number][]>([])
 const editError = ref('')
 const editLoading = ref(false)
-
-// Sync editRows when map drag updates props.editingCoords
-watch(() => props.editingCoords, (coords) => {
-  if (!coords || view.value !== 'edit') return
-  // map sends full closed ring; strip duplicate last point for table display
-  const open = isClosedRing(coords) ? coords.slice(0, -1) : [...coords]
-  // Only update rows that actually changed (avoid wiping cursor position in inputs)
-  open.forEach((c, i) => {
-    if (!editRows.value[i] || editRows.value[i][0] !== c[0] || editRows.value[i][1] !== c[1]) {
-      if (editRows.value[i]) {
-        editRows.value[i] = [...c] as [number, number]
-      }
-    }
-  })
-  // Add/remove rows if vertex count changed
-  while (editRows.value.length < open.length) editRows.value.push([...open[editRows.value.length]] as [number, number])
-  while (editRows.value.length > open.length) editRows.value.pop()
-}, { deep: true })
-
-function isClosedRing(coords: [number, number][]): boolean {
-  if (coords.length < 2) return false
-  const first = coords[0], last = coords[coords.length - 1]
-  return first[0] === last[0] && first[1] === last[1]
-}
 
 function openFenceForEdit(fence: GeoFence) {
   editingFence.value = fence
@@ -143,58 +112,17 @@ function openFenceForEdit(fence: GeoFence) {
   editStrokeWidth.value = fence.strokeWidth ?? 2
   editAlertOnExit.value = fence.alertOnExit
   editError.value = ''
-  try {
-    let coords: [number, number][] = JSON.parse(fence.coordinatesJson)
-    if (isClosedRing(coords)) coords = coords.slice(0, -1)
-    editRows.value = coords.map(c => [...c] as [number, number])
-  } catch {
-    editRows.value = []
-  }
   view.value = 'edit'
-  emit('start-editing', fence)
-}
-
-function onRowChange() {
-  // Emit the closed ring so the map can preview it
-  if (editRows.value.length >= 3) {
-    const closed: [number, number][] = [...editRows.value, [...editRows.value[0]] as [number, number]]
-    emit('editing-coords-changed', closed)
-  }
-}
-
-function addVertex() {
-  // Add midpoint between last two vertices, or just duplicate last
-  if (editRows.value.length >= 2) {
-    const a = editRows.value[editRows.value.length - 2]
-    const b = editRows.value[editRows.value.length - 1]
-    editRows.value.push([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2])
-  } else if (editRows.value.length === 1) {
-    const r = editRows.value[0]
-    editRows.value.push([r[0] + 0.005, r[1] + 0.005])
-  } else {
-    editRows.value.push([105.5, 28.2])
-  }
-  onRowChange()
-}
-
-function removeVertex(i: number) {
-  editRows.value.splice(i, 1)
-  onRowChange()
 }
 
 async function saveEdit() {
   if (!editingFence.value) return
-  if (editRows.value.length < 3) {
-    editError.value = 'A fence needs at least 3 vertices.'
-    return
-  }
-  const closed: [number, number][] = [...editRows.value, [...editRows.value[0]] as [number, number]]
   editLoading.value = true
   editError.value = ''
   try {
     await axios.put(`/api/geofences/${editingFence.value.id}`, {
       name: editName.value,
-      coordinatesJson: JSON.stringify(closed),
+      coordinatesJson: editingFence.value.coordinatesJson,
       color: editColor.value,
       fillOpacity: editFillOpacityPct.value / 100,
       strokeWidth: editStrokeWidth.value,
@@ -211,8 +139,7 @@ async function saveEdit() {
 function cancelEdit() {
   view.value = 'list'
   editingFence.value = null
-  editRows.value = []
-  emit('stop-editing')
+  editError.value = ''
 }
 
 async function removeFence(id: number) {
@@ -243,7 +170,7 @@ const SAMPLE = '[[105.496,28.196],[105.504,28.196],[105.504,28.204],[105.496,28.
 </script>
 
 <template>
-  <div class="backdrop" :class="{ 'edit-mode': view === 'edit' }" @click="onBackdrop">
+  <div class="backdrop" @click="onBackdrop">
     <div class="modal" role="dialog">
 
       <!-- ── Header ── -->
@@ -360,10 +287,6 @@ const SAMPLE = '[[105.496,28.196],[105.504,28.196],[105.504,28.204],[105.496,28.
 
       <!-- ═══════════════ EDIT VIEW ═══════════════ -->
       <div v-else-if="view === 'edit'" class="modal-body">
-        <div class="edit-hint">
-          Drag vertices directly on the map <strong>or</strong> type coordinates in the table — both sync in real time.
-        </div>
-
         <div class="field-row">
           <label style="flex:1">
             Name
@@ -399,45 +322,6 @@ const SAMPLE = '[[105.496,28.196],[105.504,28.196],[105.504,28.204],[105.496,28.
           Alert when animal exits
         </label>
 
-        <!-- Coordinate table -->
-        <div class="coord-table-wrap">
-          <table class="coord-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Longitude</th>
-                <th>Latitude</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(row, i) in editRows" :key="i">
-                <td class="idx">{{ i + 1 }}</td>
-                <td>
-                  <input
-                    type="number"
-                    step="0.00001"
-                    :value="row[0]"
-                    @change="row[0] = parseFloat(($event.target as HTMLInputElement).value); onRowChange()"
-                  />
-                </td>
-                <td>
-                  <input
-                    type="number"
-                    step="0.00001"
-                    :value="row[1]"
-                    @change="row[1] = parseFloat(($event.target as HTMLInputElement).value); onRowChange()"
-                  />
-                </td>
-                <td>
-                  <button class="del-row-btn" :disabled="editRows.length <= 3" @click="removeVertex(i)">✕</button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          <button class="btn-add-vertex" @click="addVertex">+ Add Vertex</button>
-        </div>
-
         <div v-if="editError" class="error-msg">{{ editError }}</div>
 
         <div class="row-actions">
@@ -458,19 +342,6 @@ const SAMPLE = '[[105.496,28.196],[105.504,28.196],[105.504,28.204],[105.496,28.
   background: rgba(0,0,0,0.6);
   display: flex; align-items: center; justify-content: center;
   z-index: 1000;
-}
-/* In edit mode: no overlay so the map is fully interactive */
-.backdrop.edit-mode {
-  background: transparent;
-  pointer-events: none;
-  align-items: flex-start;
-  justify-content: flex-end;
-  padding: calc(var(--header-height, 48px) + 8px) 12px 12px 0;
-}
-.backdrop.edit-mode .modal {
-  pointer-events: all;
-  max-height: calc(100vh - var(--header-height, 48px) - 24px);
-  box-shadow: 0 4px 32px rgba(0,0,0,0.7), 0 0 0 1px rgba(66,165,245,0.3);
 }
 .modal {
   background: var(--color-bg-card);
@@ -605,46 +476,6 @@ textarea { resize: vertical; font-family: monospace; }
 .color-input { width: 40px; height: 32px; border: 1px solid var(--color-border); border-radius: 5px; padding: 2px; cursor: pointer; }
 .color-hex { font-size: 11px; color: var(--color-text-secondary); font-family: monospace; }
 .hint { font-size: 10px; color: var(--color-text-secondary); }
-
-/* ── Edit hint banner ── */
-.edit-hint {
-  background: #42A5F511; border: 1px solid #42A5F533;
-  border-radius: 5px; padding: 8px 12px;
-  font-size: 12px; color: var(--color-info);
-}
-
-/* ── Coordinate table ── */
-.coord-table-wrap {
-  border: 1px solid var(--color-border); border-radius: 6px; overflow: hidden;
-}
-.coord-table {
-  width: 100%; border-collapse: collapse; font-size: 12px;
-}
-.coord-table th {
-  background: var(--color-bg-sidebar); padding: 6px 8px;
-  text-align: left; color: var(--color-text-secondary);
-  font-weight: 500; border-bottom: 1px solid var(--color-border);
-}
-.coord-table td { padding: 4px 6px; border-bottom: 1px solid var(--color-border); }
-.coord-table tr:last-child td { border-bottom: none; }
-.idx { color: var(--color-text-secondary); width: 24px; text-align: center; }
-.coord-table input[type="number"] {
-  width: 100%; background: transparent; border: 1px solid transparent;
-  border-radius: 3px; padding: 3px 6px; color: var(--color-text-primary);
-  font-size: 12px; font-family: monospace; outline: none;
-}
-.coord-table input[type="number"]:focus { border-color: var(--color-accent); background: var(--color-bg-sidebar); }
-.del-row-btn {
-  background: none; border: none; color: var(--color-danger);
-  cursor: pointer; font-size: 12px; padding: 2px 4px;
-}
-.del-row-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-.btn-add-vertex {
-  width: 100%; padding: 6px; background: transparent;
-  border: none; border-top: 1px solid var(--color-border);
-  color: var(--color-accent); font-size: 12px; cursor: pointer;
-}
-.btn-add-vertex:hover { background: #4CAF5011; }
 
 /* ── Actions ── */
 .row-actions { display: flex; gap: 8px; justify-content: flex-end; }

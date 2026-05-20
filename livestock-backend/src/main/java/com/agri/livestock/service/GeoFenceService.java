@@ -63,10 +63,10 @@ public class GeoFenceService {
     }
 
     public void delete(Long id) {
-        geoFenceRepository.findById(id).ifPresent(f -> {
-            f.setActive(false);
-            geoFenceRepository.save(f);
-        });
+        // Clear home-fence assignment on any animals pointing to this fence
+        animalRepository.findByHomeGeofenceId(id)
+                .forEach(a -> { a.setHomeGeofenceId(null); animalRepository.save(a); });
+        geoFenceRepository.deleteById(id);
     }
 
     /**

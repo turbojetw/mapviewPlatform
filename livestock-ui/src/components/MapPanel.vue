@@ -307,10 +307,8 @@ function updateFenceLabel() {
 
 function updateGeofences() {
   if (!map || !mapReady.value) return
-  const editingId = props.editingFenceCoords ? getEditingFenceId() : null
-
   const features: GeoJSON.Feature[] = props.geofences
-    .filter(f => f.active && f.id !== editingId && !props.hiddenFenceIds.includes(f.id))
+    .filter(f => f.active && !props.hiddenFenceIds.includes(f.id))
     .map(fence => {
       try {
         const coords: [number, number][] = JSON.parse(fence.coordinatesJson)
@@ -363,9 +361,6 @@ function updateGeofences() {
 }
 
 // Track which fence is being edited (we need the id to exclude from normal layer)
-let _editingFenceId: number | null = null
-function getEditingFenceId() { return _editingFenceId }
-function setEditingFenceId(id: number | null) { _editingFenceId = id }
 
 // ─── Edit preview layer ────────────────────────────────────────────────────
 
@@ -415,33 +410,6 @@ function clearEditPreview() {
   ;(map.getSource('fence-edit-preview') as maplibregl.GeoJSONSource).setData(empty)
 }
 
-// ─── Ghost (original) layer shown while editing ────────────────────────────
-
-function initGhostLayer() {
-  if (map.getSource('fence-ghost')) return
-  map.addSource('fence-ghost', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
-  map.addLayer({ id: 'fence-ghost-fill', type: 'fill', source: 'fence-ghost',
-    paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.07 } })
-  map.addLayer({ id: 'fence-ghost-line', type: 'line', source: 'fence-ghost',
-    paint: { 'line-color': ['get', 'color'], 'line-width': 1.5,
-             'line-dasharray': [3, 3], 'line-opacity': 0.45 } })
-}
-
-function updateGhostLayer(coords: [number, number][], color: string) {
-  if (!map || !map.isStyleLoaded()) return
-  initGhostLayer()
-  const ring = isClosedRing(coords) ? coords : [...coords, coords[0]]
-  const data: GeoJSON.FeatureCollection = {
-    type: 'FeatureCollection',
-    features: [{ type: 'Feature', properties: { color }, geometry: { type: 'Polygon', coordinates: [ring] } }]
-  }
-  ;(map.getSource('fence-ghost') as maplibregl.GeoJSONSource).setData(data)
-}
-
-function clearGhostLayer() {
-  if (!map || !map.isStyleLoaded() || !map.getSource('fence-ghost')) return
-  ;(map.getSource('fence-ghost') as maplibregl.GeoJSONSource).setData({ type: 'FeatureCollection', features: [] })
-}
 
 function isClosedRing(coords: [number, number][]): boolean {
   if (coords.length < 2) return false
@@ -734,8 +702,6 @@ watch(() => props.editingFenceCoords, (coords) => {
   if (!coords) {
     clearVertexMarkers()
     clearEditPreview()
-    clearGhostLayer()
-    setEditingFenceId(null)
     updateGeofences()
     return
   }
@@ -760,9 +726,7 @@ function flyToAnimal(animalId: number) {
 }
 
 function startFenceEdit(fence: { id: number; coords: [number, number][]; color: string }) {
-  setEditingFenceId(fence.id)
   updateGeofences()
-  updateGhostLayer(fence.coords, fence.color)
   setupVertexMarkers(fence.coords)
   updateEditPreview(fence.coords, fence.color)
   // Fly to fence — right padding accounts for the 420px edit panel

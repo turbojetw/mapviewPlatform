@@ -71,6 +71,15 @@ export interface AlertNotification {
   timestamp: string
 }
 
+export interface AnimalEvent {
+  id: number
+  animalId: number
+  eventType: string
+  description: string
+  eventDate: string
+  createdAt: string
+}
+
 export interface DevicePayload {
   deviceEui: string
   ts?: number

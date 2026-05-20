@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import type { Animal, AnimalStatus, GeoFence, LocationHistory } from '../types'
-import { fetchHistory, simulatorPushRandom, setAnimalHomeFence } from '../api/livestock'
+import type { Animal, AnimalStatus, GeoFence, LocationHistory, AnimalEvent } from '../types'
+import { fetchHistory, simulatorPushRandom, setAnimalHomeFence, fetchAnimalEvents, createAnimalEvent, deleteAnimalEvent } from '../api/livestock'
 import { timeAgo } from '../utils/time'
 
 const props = defineProps<{
@@ -106,8 +106,56 @@ function cancelFenceEdit() {
   fenceError.value = ''
 }
 
+// ── Growth log ───────────────────────────────────────────────────────────────
+const EVENT_TYPES = [
+  { value: 'HEALTH_CHECK', label: '🩺 Health Check' },
+  { value: 'VACCINATION',  label: '💉 Vaccination'  },
+  { value: 'WEIGHT',       label: '⚖️ Weight'        },
+  { value: 'TREATMENT',    label: '💊 Treatment'     },
+  { value: 'BIRTH',        label: '🐣 Birth'         },
+  { value: 'NOTE',         label: '📝 Note'          },
+]
+const EVENT_LABEL: Record<string, string> = Object.fromEntries(EVENT_TYPES.map(e => [e.value, e.label]))
+
+const events = ref<AnimalEvent[]>([])
+const eventsLoading = ref(false)
+const showAddEvent = ref(false)
+const eventForm = ref({ eventType: 'HEALTH_CHECK', description: '', eventDate: new Date().toISOString().slice(0, 10) })
+const eventSaving = ref(false)
+const eventError = ref('')
+
+async function loadEvents() {
+  eventsLoading.value = true
+  try { events.value = await fetchAnimalEvents(props.animal.id) }
+  finally { eventsLoading.value = false }
+}
+
+async function submitEvent() {
+  if (!eventForm.value.description.trim()) { eventError.value = 'Description is required.'; return }
+  eventSaving.value = true
+  eventError.value = ''
+  try {
+    await createAnimalEvent(props.animal.id, eventForm.value)
+    eventForm.value = { eventType: 'HEALTH_CHECK', description: '', eventDate: new Date().toISOString().slice(0, 10) }
+    showAddEvent.value = false
+    await loadEvents()
+  } catch {
+    eventError.value = 'Failed to save event.'
+  } finally {
+    eventSaving.value = false
+  }
+}
+
+async function removeEvent(eventId: number) {
+  try {
+    await deleteAnimalEvent(props.animal.id, eventId)
+    events.value = events.value.filter(e => e.id !== eventId)
+  } catch { /* ignore */ }
+}
+
 watch(() => props.animal.id, () => loadHistory(), { immediate: true })
 watch(historyRange, () => loadHistory())
+watch(() => props.animal.id, () => loadEvents(), { immediate: true })
 </script>
 
 <template>
@@ -140,6 +188,10 @@ watch(historyRange, () => loadHistory())
             <span class="collar-dot" :style="{ background: animal.collarColor }" />
             {{ animal.collarColor }}
           </span>
+        </div>
+        <div class="info-row">
+          <span class="label">Added</span>
+          <span class="mono">{{ new Date(animal.createdAt).toLocaleDateString() }}</span>
         </div>
         <div v-if="animal.notes" class="info-row">
           <span class="label">Notes</span>
@@ -248,6 +300,45 @@ watch(historyRange, () => loadHistory())
             <span class="fix-time">{{ timeAgo(fix.timestamp) }}</span>
             <span class="fix-coords">{{ fix.lat?.toFixed(4) }}, {{ fix.lng?.toFixed(4) }}</span>
             <span v-if="fix.altitude" class="fix-alt">{{ fix.altitude.toFixed(0) }}m</span>
+          </div>
+        </div>
+      </section>
+      <!-- Growth log -->
+      <section class="section">
+        <div class="log-header">
+          <div class="section-title">Growth Log</div>
+          <button class="log-add-btn" @click="showAddEvent = !showAddEvent" :title="showAddEvent ? 'Cancel' : 'Add event'">
+            {{ showAddEvent ? '✕' : '+ Add' }}
+          </button>
+        </div>
+
+        <!-- Add event form -->
+        <div v-if="showAddEvent" class="log-form">
+          <select v-model="eventForm.eventType" class="log-select">
+            <option v-for="t in EVENT_TYPES" :key="t.value" :value="t.value">{{ t.label }}</option>
+          </select>
+          <input v-model="eventForm.eventDate" type="date" class="log-date" />
+          <textarea v-model="eventForm.description" class="log-desc" rows="2" placeholder="Description…" />
+          <div v-if="eventError" class="log-error">{{ eventError }}</div>
+          <div class="log-form-actions">
+            <button class="log-btn-cancel" @click="showAddEvent = false; eventError = ''">Cancel</button>
+            <button class="log-btn-save" :disabled="eventSaving" @click="submitEvent">
+              {{ eventSaving ? 'Saving…' : 'Save' }}
+            </button>
+          </div>
+        </div>
+
+        <div v-if="eventsLoading" class="sub-text">Loading…</div>
+        <div v-else-if="events.length === 0 && !showAddEvent" class="sub-text">No events recorded yet.</div>
+
+        <div v-if="events.length > 0" class="event-list">
+          <div v-for="ev in events" :key="ev.id" class="event-row">
+            <div class="event-meta">
+              <span class="event-type-badge">{{ EVENT_LABEL[ev.eventType] ?? ev.eventType }}</span>
+              <span class="event-date">{{ ev.eventDate }}</span>
+              <button class="event-del-btn" title="Delete" @click="removeEvent(ev.id)">✕</button>
+            </div>
+            <div class="event-desc">{{ ev.description }}</div>
           </div>
         </div>
       </section>
@@ -452,4 +543,41 @@ watch(historyRange, () => loadHistory())
 .fix-time { color: var(--color-text-secondary); width: 52px; flex-shrink: 0; font-family: monospace; font-size: 10px; }
 .fix-coords { flex: 1; font-family: monospace; color: var(--color-text-primary); font-size: 10px; }
 .fix-alt { color: var(--color-info); font-size: 10px; }
+
+/* ── Growth log ── */
+.log-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.log-header .section-title { margin-bottom: 0; }
+.log-add-btn {
+  background: none; border: 1px solid var(--color-border); border-radius: 4px;
+  color: var(--color-accent); font-size: 11px; font-weight: 600;
+  padding: 2px 8px; cursor: pointer; transition: all 0.15s;
+}
+.log-add-btn:hover { background: var(--color-accent); color: #fff; }
+
+.log-form { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.log-select, .log-date, .log-desc {
+  background: var(--color-bg-sidebar);
+  border: 1px solid var(--color-border); border-radius: 5px;
+  padding: 6px 8px; color: var(--color-text-primary);
+  font-size: 12px; outline: none; width: 100%; box-sizing: border-box;
+}
+.log-select:focus, .log-date:focus, .log-desc:focus { border-color: var(--color-accent); }
+.log-desc { resize: vertical; min-height: 52px; font-family: inherit; }
+.log-error { font-size: 11px; color: var(--color-danger); }
+.log-form-actions { display: flex; gap: 6px; }
+.log-btn-cancel { flex: 1; padding: 5px; background: transparent; border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text-secondary); font-size: 11px; cursor: pointer; }
+.log-btn-save { flex: 1; padding: 5px; background: var(--color-accent); border: none; border-radius: 4px; color: #fff; font-size: 11px; font-weight: 600; cursor: pointer; }
+.log-btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.event-list { display: flex; flex-direction: column; gap: 6px; }
+.event-row {
+  background: var(--color-bg-card); border: 1px solid var(--color-border);
+  border-radius: 6px; padding: 7px 9px;
+}
+.event-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.event-type-badge { font-size: 11px; font-weight: 600; color: var(--color-text-primary); flex: 1; }
+.event-date { font-size: 10px; color: var(--color-text-secondary); font-family: monospace; flex-shrink: 0; }
+.event-del-btn { background: none; border: none; color: var(--color-text-secondary); font-size: 10px; cursor: pointer; padding: 0 2px; line-height: 1; flex-shrink: 0; }
+.event-del-btn:hover { color: var(--color-danger); }
+.event-desc { font-size: 11px; color: var(--color-text-secondary); line-height: 1.45; }
 </style>

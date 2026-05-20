@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { Animal, AnimalStatus, GeoFence, LocationHistory, DevicePayload, GeofenceAlertRecord, FenceStats } from '../types'
+import type { Animal, AnimalStatus, GeoFence, LocationHistory, DevicePayload, GeofenceAlertRecord, FenceStats, AnimalEvent } from '../types'
 
 const api = axios.create({ baseURL: '/api' })
 
@@ -58,3 +58,12 @@ export const fetchFenceAnimals = (fenceId: number): Promise<Animal[]> =>
 
 export const assignAnimalsToFence = (fenceId: number, animalIds: number[]): Promise<void> =>
   api.put(`/geofences/${fenceId}/animals`, animalIds).then(() => undefined)
+
+export const fetchAnimalEvents = (animalId: number): Promise<AnimalEvent[]> =>
+  api.get(`/animals/${animalId}/events`).then(r => r.data)
+
+export const createAnimalEvent = (animalId: number, data: { eventType: string; description: string; eventDate: string }): Promise<AnimalEvent> =>
+  api.post(`/animals/${animalId}/events`, data).then(r => r.data)
+
+export const deleteAnimalEvent = (animalId: number, eventId: number): Promise<void> =>
+  api.delete(`/animals/${animalId}/events/${eventId}`).then(() => undefined)

@@ -72,6 +72,7 @@ const drawCount = computed(() => mapPanel.value?.drawVertexCount.value ?? 0)
 // ── Fence editing state ────────────────────────────────────────────────────
 const editingFenceCoords = ref<[number, number][] | null>(null)
 const editingFenceColor = ref('#FF6B6B')
+const editUndoStack = ref<[number, number][][]>([])
 
 // ── Fence drawing state ────────────────────────────────────────────────────
 const drawnFenceCoords = ref<[number, number][] | null>(null)
@@ -93,6 +94,7 @@ function onDrawCancelled() {
 }
 
 function onStartEditing(fence: GeoFence) {
+  editUndoStack.value = []
   editingFenceColor.value = fence.color
   try {
     const coords: [number, number][] = JSON.parse(fence.coordinatesJson)
@@ -111,22 +113,40 @@ function onEditingCoordsChanged(coords: [number, number][]) {
   editingFenceCoords.value = coords
 }
 
+function pushEditUndo() {
+  if (editingFenceCoords.value)
+    editUndoStack.value.push(editingFenceCoords.value.map(c => [...c] as [number, number]))
+}
+
 function onFenceVertexMoved(index: number, coord: [number, number]) {
   if (!editingFenceCoords.value) return
+  pushEditUndo()
   const coords = [...editingFenceCoords.value]
   coords[index] = coord
-  // Keep closing point in sync with first point
-  if (index === 0 && coords.length > 1) {
-    coords[coords.length - 1] = [...coord]
-  }
+  if (index === 0 && coords.length > 1) coords[coords.length - 1] = [...coord]
   editingFenceCoords.value = coords
 }
 
 function onFenceVertexInserted(afterIndex: number, coord: [number, number]) {
   if (!editingFenceCoords.value) return
-  const open = editingFenceCoords.value.slice(0, -1) // strip closing duplicate
+  pushEditUndo()
+  const open = editingFenceCoords.value.slice(0, -1)
   open.splice(afterIndex + 1, 0, coord)
   editingFenceCoords.value = [...open, [...open[0]] as [number, number]]
+}
+
+function onFenceVertexDeleted(index: number) {
+  if (!editingFenceCoords.value) return
+  const open = editingFenceCoords.value.slice(0, -1)
+  if (open.length <= 3) return
+  pushEditUndo()
+  open.splice(index, 1)
+  editingFenceCoords.value = [...open, [...open[0]] as [number, number]]
+}
+
+function onEditUndo() {
+  const prev = editUndoStack.value.pop()
+  if (prev) editingFenceCoords.value = prev
 }
 
 // ── WebSocket ──────────────────────────────────────────────────────────────
@@ -254,6 +274,8 @@ onMounted(async () => {
         @animal-selected="selectAnimal"
         @fence-vertex-moved="onFenceVertexMoved"
         @fence-vertex-inserted="onFenceVertexInserted"
+        @fence-vertex-deleted="onFenceVertexDeleted"
+        @edit-undo="onEditUndo"
         @draw-complete="onDrawComplete"
         @draw-cancelled="onDrawCancelled"
       />

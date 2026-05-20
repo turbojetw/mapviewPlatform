@@ -18,6 +18,8 @@ const emit = defineEmits<{
   (e: 'animal-selected', id: number): void
   (e: 'fence-vertex-moved', index: number, coord: [number, number]): void
   (e: 'fence-vertex-inserted', afterIndex: number, coord: [number, number]): void
+  (e: 'fence-vertex-deleted', index: number): void
+  (e: 'edit-undo'): void
   (e: 'draw-complete', coords: [number, number][]): void
   (e: 'draw-cancelled'): void
 }>()
@@ -423,14 +425,40 @@ function isClosedRing(coords: [number, number][]): boolean {
 
 function makeVertexEl(index: number): HTMLElement {
   const el = document.createElement('div')
+  const color = props.editingFenceColor || '#FF6B6B'
   el.style.cssText = `
     width:18px;height:18px;border-radius:50%;box-sizing:border-box;
-    background:#fff;border:3px solid ${props.editingFenceColor || '#FF6B6B'};
+    background:#fff;border:3px solid ${color};
     cursor:grab;box-shadow:0 2px 6px rgba(0,0,0,0.55);
-    z-index:10;
+    z-index:10;transition:border-color 0.12s,transform 0.12s;
   `
-  el.title = `Vertex ${index + 1} — drag to move`
+  el.title = `Vertex ${index + 1} — drag to move · right-click to delete`
+
+  el.addEventListener('mouseenter', () => {
+    el.style.borderColor = '#ef5350'
+    el.style.transform = 'scale(1.2)'
+  })
+  el.addEventListener('mouseleave', () => {
+    el.style.borderColor = props.editingFenceColor || '#FF6B6B'
+    el.style.transform = ''
+  })
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (props.editingFenceCoords && props.editingFenceCoords.length > 4) {
+      emit('fence-vertex-deleted', index)
+    }
+  })
   return el
+}
+
+function handleEditKey(e: KeyboardEvent) {
+  if (drawActive.value) return
+  if (!props.editingFenceCoords) return
+  if ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault()
+    emit('edit-undo')
+  }
 }
 
 function setupVertexMarkers(coords: [number, number][]) {
@@ -540,7 +568,14 @@ function setupMidpointMarkers(coords: [number, number][]) {
 
     marker.on('dragstart', () => {
       draggingMidpointEdge = i
+      // Upgrade visually to a vertex handle so it's clear a new vertex is forming
+      el.style.width = '18px'
+      el.style.height = '18px'
+      el.style.opacity = '1'
+      el.style.background = '#fff'
       el.style.cursor = 'grabbing'
+      el.style.zIndex = '10'
+      el.style.boxShadow = '0 2px 6px rgba(0,0,0,0.55)'
     })
 
     marker.on('drag', () => {
@@ -557,7 +592,6 @@ function setupMidpointMarkers(coords: [number, number][]) {
 
     marker.on('dragend', () => {
       draggingMidpointEdge = null
-      el.style.cursor = 'grab'
       const pos = marker.getLngLat()
       emit('fence-vertex-inserted', i, [pos.lng, pos.lat])
     })
@@ -626,6 +660,9 @@ function setupLineDrag() {
     map.getCanvas().style.cursor = 'grabbing'
     map.dragPan.disable()
 
+    // Live cursor vertex marker — appears as soon as the user moves (shows where new vertex will land)
+    let cursorMarker: maplibregl.Marker | null = null
+
     function onMove(me: maplibregl.MapMouseEvent) {
       if (lineDragEdge === null || !props.editingFenceCoords) return
       lineDragHasMoved = true
@@ -637,12 +674,24 @@ function setupLineDrag() {
       const newOpen = [...co]
       newOpen.splice(lineDragEdge + 1, 0, pos)
       updateEditPreview([...newOpen, [...newOpen[0]] as [number, number]], props.editingFenceColor)
+      // Show / move live cursor vertex marker
+      if (!cursorMarker) {
+        const el = makeVertexEl(-1)
+        el.style.borderColor = '#FFA726' // orange = "new vertex"
+        el.style.pointerEvents = 'none'
+        cursorMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
+          .setLngLat(pos).addTo(map)
+      } else {
+        cursorMarker.setLngLat(pos)
+      }
     }
 
     function finishLineDrag(finalPos: [number, number] | null) {
       map.off('mousemove', onMove)
       map.off('mouseup', onUp)
       window.removeEventListener('mouseup', onWindowUp)
+      cursorMarker?.remove()
+      cursorMarker = null
       map.getCanvas().style.cursor = ''
       map.dragPan.enable()
       if (lineDragEdge !== null) {
@@ -706,6 +755,7 @@ watch(() => props.editingFenceCoords, (coords) => {
     clearEditPreview()
     _editingFenceId = null
     updateGeofences()
+    window.removeEventListener('keydown', handleEditKey)
     return
   }
   updateEditPreview(coords, props.editingFenceColor)
@@ -733,6 +783,7 @@ function startFenceEdit(fence: { id: number; coords: [number, number][]; color: 
   updateGeofences()
   setupVertexMarkers(fence.coords)
   updateEditPreview(fence.coords, fence.color)
+  window.addEventListener('keydown', handleEditKey)
   // Fly to fence — right padding accounts for the 420px edit panel
   if (fence.coords.length > 0 && map) {
     const lngs = fence.coords.map(c => c[0])

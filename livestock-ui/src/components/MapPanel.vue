@@ -307,8 +307,10 @@ function updateFenceLabel() {
 
 function updateGeofences() {
   if (!map || !mapReady.value) return
+  const editingId = props.editingFenceCoords ? _editingFenceId : null
+
   const features: GeoJSON.Feature[] = props.geofences
-    .filter(f => f.active && !props.hiddenFenceIds.includes(f.id))
+    .filter(f => f.active && f.id !== editingId && !props.hiddenFenceIds.includes(f.id))
     .map(fence => {
       try {
         const coords: [number, number][] = JSON.parse(fence.coordinatesJson)
@@ -361,6 +363,7 @@ function updateGeofences() {
 }
 
 // Track which fence is being edited (we need the id to exclude from normal layer)
+let _editingFenceId: number | null = null
 
 // ─── Edit preview layer ────────────────────────────────────────────────────
 
@@ -371,10 +374,9 @@ function initEditPreviewLayer() {
     data: { type: 'FeatureCollection', features: [] }
   })
   map.addLayer({ id: 'fence-edit-fill', type: 'fill', source: 'fence-edit-preview',
-    paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.18 } })
+    paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.15 } })
   map.addLayer({ id: 'fence-edit-line', type: 'line', source: 'fence-edit-preview',
-    paint: { 'line-color': ['get', 'color'], 'line-width': 2.5,
-             'line-dasharray': [4, 2], 'line-opacity': 1 } })
+    paint: { 'line-color': ['get', 'color'], 'line-width': 3, 'line-opacity': 1 } })
   // Transparent wider hit area so line drag works away from vertex/midpoint markers
   map.addLayer({ id: 'fence-edit-hit', type: 'line', source: 'fence-edit-preview',
     paint: { 'line-width': 20, 'line-opacity': 0 } })
@@ -422,10 +424,10 @@ function isClosedRing(coords: [number, number][]): boolean {
 function makeVertexEl(index: number): HTMLElement {
   const el = document.createElement('div')
   el.style.cssText = `
-    width:14px;height:14px;border-radius:50%;
-    background:#fff;border:2.5px solid ${props.editingFenceColor || '#FF6B6B'};
-    cursor:grab;box-shadow:0 1px 4px rgba(0,0,0,0.5);
-    position:relative;z-index:10;
+    width:18px;height:18px;border-radius:50%;box-sizing:border-box;
+    background:#fff;border:3px solid ${props.editingFenceColor || '#FF6B6B'};
+    cursor:grab;box-shadow:0 2px 6px rgba(0,0,0,0.55);
+    z-index:10;
   `
   el.title = `Vertex ${index + 1} — drag to move`
   return el
@@ -438,7 +440,7 @@ function setupVertexMarkers(coords: [number, number][]) {
 
   points.forEach((coord, i) => {
     const el = makeVertexEl(i)
-    const marker = new maplibregl.Marker({ element: el, draggable: true })
+    const marker = new maplibregl.Marker({ element: el, draggable: true, anchor: 'center' })
       .setLngLat(coord)
       .addTo(map)
 
@@ -513,10 +515,10 @@ function midpoint(a: [number, number], b: [number, number]): [number, number] {
 function makeMidpointEl(): HTMLElement {
   const el = document.createElement('div')
   el.style.cssText = `
-    width:10px;height:10px;border-radius:50%;
-    background:rgba(255,255,255,0.45);border:2px solid ${props.editingFenceColor || '#FF6B6B'};
-    cursor:grab;box-shadow:0 1px 3px rgba(0,0,0,0.4);
-    position:relative;z-index:9;
+    width:12px;height:12px;border-radius:50%;box-sizing:border-box;
+    background:rgba(255,255,255,0.85);border:2px solid ${props.editingFenceColor || '#FF6B6B'};
+    cursor:grab;box-shadow:0 1px 4px rgba(0,0,0,0.45);
+    z-index:9;opacity:0.75;
   `
   el.title = 'Drag to insert vertex on this edge'
   return el
@@ -532,7 +534,7 @@ function setupMidpointMarkers(coords: [number, number][]) {
     const next = open[(i + 1) % n]
     const el = makeMidpointEl()
 
-    const marker = new maplibregl.Marker({ element: el, draggable: true })
+    const marker = new maplibregl.Marker({ element: el, draggable: true, anchor: 'center' })
       .setLngLat(midpoint(coord, next))
       .addTo(map)
 
@@ -702,6 +704,7 @@ watch(() => props.editingFenceCoords, (coords) => {
   if (!coords) {
     clearVertexMarkers()
     clearEditPreview()
+    _editingFenceId = null
     updateGeofences()
     return
   }
@@ -726,6 +729,7 @@ function flyToAnimal(animalId: number) {
 }
 
 function startFenceEdit(fence: { id: number; coords: [number, number][]; color: string }) {
+  _editingFenceId = fence.id
   updateGeofences()
   setupVertexMarkers(fence.coords)
   updateEditPreview(fence.coords, fence.color)
